@@ -1,0 +1,82 @@
+"""
+Typed events flowing over the LiveKit data channel.
+Mirrors apps/web/lib/events.ts on the agent side.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field, asdict
+from typing import Any, Literal
+
+
+# ---------------- agent -> ui ----------------
+@dataclass
+class StepChange:
+    type: Literal["step.change"] = "step.change"
+    step: str = "greet"
+
+
+@dataclass
+class CaptionEvent:
+    speaker: Literal["drishti", "customer"] = "drishti"
+    text: str = ""
+    is_final: bool = True
+    type: Literal["caption"] = "caption"
+
+
+@dataclass
+class SignalsUpdate:
+    signals: dict[str, Any] = field(default_factory=dict)
+    type: Literal["signals.update"] = "signals.update"
+
+
+@dataclass
+class PanRequest:
+    prompt: str = "Please upload a clear photo of your PAN card."
+    type: Literal["pan.request"] = "pan.request"
+
+
+@dataclass
+class ConsentRequest:
+    consent_type: str = "data_processing"
+    prompt: str = ""
+    type: Literal["consent.request"] = "consent.request"
+
+
+@dataclass
+class OfferShow:
+    decision: str = "offer"
+    offers: list[dict] = field(default_factory=list)
+    reason: str | None = None
+    next_best_action: str | None = None
+    shap_top3: list[dict] = field(default_factory=list)
+    type: Literal["offer.show"] = "offer.show"
+
+
+@dataclass
+class FraudFlag:
+    signal: str = ""
+    severity: int = 2
+    reason: str = ""
+    type: Literal["fraud.flag"] = "fraud.flag"
+
+
+@dataclass
+class SessionEnded:
+    outcome: str = "approved"
+    audit_hash: str | None = None
+    type: Literal["session.ended"] = "session.ended"
+
+
+# ---------------- helpers ----------------
+def encode(event) -> bytes:
+    """Serialize an event dataclass for publishing on the data channel."""
+    return json.dumps(asdict(event), separators=(",", ":")).encode("utf-8")
+
+
+def decode(payload: bytes) -> dict | None:
+    try:
+        return json.loads(payload.decode("utf-8"))
+    except Exception:
+        return None

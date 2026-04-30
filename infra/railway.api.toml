@@ -1,0 +1,18 @@
+# Railway service config for the API.
+# Drag this into the Railway dashboard or use `railway up`.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "services/api/Dockerfile"
+
+[deploy]
+startCommand = "python -m uvicorn api.main:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/healthz"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+
+[env]
+PORT = "8421"
+AUDIT_DB_PATH = "/data/audit.db"
+CORS_ORIGINS = "*"

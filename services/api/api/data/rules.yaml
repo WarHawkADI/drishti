@@ -1,0 +1,54 @@
+# Drishti policy rulebook v1
+# Each rule has: id, check (Python expression), on_fail action, reason, optional next_best_action
+# Available expression vars: profile (dict), risk (dict)
+
+version: "1.0.0"
+
+rules:
+  - id: min_age
+    check: "21 <= profile.age <= 60"
+    on_fail: hard_decline
+    reason: "Age must be between 21 and 60 years."
+    next_best_action: ""
+
+  - id: min_income
+    check: "profile.monthly_income >= 25000"
+    on_fail: hard_decline
+    reason: "Minimum monthly income required is Rs 25,000."
+    next_best_action: "Reapply once income is verifiable above Rs 25,000/month."
+
+  - id: cibil_threshold
+    check: "profile.cibil >= 650"
+    on_fail: soft_decline
+    reason: "Credit score is below the required threshold of 650."
+    next_best_action: "Pay down high-utilization credit cards. CIBIL typically improves to 680+ within 90 days. We will reach out then."
+
+  - id: dti_cap
+    check: "profile.dti <= 0.50"
+    on_fail: soft_decline
+    reason: "Debt-to-income ratio is too high."
+    next_best_action: "Close one of your existing personal loans, then revisit."
+
+  - id: employment_type
+    check: "profile.employment_type in ['salaried', 'self_employed', 'salaried_govt', 'salaried_pvt']"
+    on_fail: hard_decline
+    reason: "Employment type not currently supported."
+    next_best_action: ""
+
+  - id: existing_loans_cap
+    check: "profile.existing_loans <= 3"
+    on_fail: soft_decline
+    reason: "You currently have more than 3 active loans."
+    next_best_action: "Close one of your existing loans before reapplying."
+
+  - id: dpd_check
+    check: "profile.dpd_30plus_last_12m == 0"
+    on_fail: soft_decline
+    reason: "Recent missed-payment history (30+ DPD in last 12 months)."
+    next_best_action: "Maintain on-time payments for 6 months and reapply."
+
+  - id: fraud_severity
+    check: "risk.fraud_severity_max < 4"
+    on_fail: route_to_human
+    reason: "High-severity fraud signal detected during the call."
+    next_best_action: ""

@@ -1,0 +1,203 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* @livekit/components-styles intentionally NOT imported.
+   We render our own UI on top of the headless LiveKit components. */
+
+:root {
+  --ink: #0b0b2b;
+  --indigo: #1e1b4b;
+  --indigo-mid: #312e81;
+  --indigo-light: #eef2ff;
+  --gold: #f5b700;
+  --gold-dark: #b8860b;
+  --violet: #7c3aed;
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--ink);
+  color: #e0e7ff;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+* { box-sizing: border-box; }
+
+/* ========================================================
+   Aurora background - fixed, full-viewport, behind content
+   ========================================================*/
+.aurora {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 60% 45% at 15% 10%, rgba(124,58,237,0.18), transparent 60%),
+    radial-gradient(ellipse 50% 40% at 85% 5%,  rgba(245,183,0,0.10), transparent 60%),
+    radial-gradient(ellipse 70% 50% at 50% 100%,rgba(67,56,202,0.20), transparent 60%);
+  filter: blur(40px);
+  animation: aurora-drift 18s ease-in-out infinite alternate;
+}
+@keyframes aurora-drift {
+  0%   { transform: translate(0, 0) scale(1); }
+  50%  { transform: translate(-2%, 2%) scale(1.05); }
+  100% { transform: translate(2%, -1%) scale(1); }
+}
+
+body > * { position: relative; z-index: 1; }
+
+/* ========================================================
+   Voice orb pulse + radial bloom
+   ========================================================*/
+@keyframes orb-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.7; }
+  50%      { transform: scale(1.15); opacity: 1; }
+}
+.orb-pulse { animation: orb-pulse 2s ease-in-out infinite; }
+
+@keyframes ring-out {
+  0%   { transform: scale(0.9); opacity: 0.6; }
+  100% { transform: scale(1.7); opacity: 0; }
+}
+.ring-out { animation: ring-out 2.4s ease-out infinite; }
+
+/* ========================================================
+   Glass surfaces + gold-bordered card
+   ========================================================*/
+.glass {
+  background: rgba(255, 255, 255, 0.04);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.glass-strong {
+  background: rgba(19, 16, 47, 0.7);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+}
+
+/* ========================================================
+   Live "REC" indicator pulse
+   ========================================================*/
+.rec-dot {
+  width: 8px; height: 8px;
+  border-radius: 9999px;
+  background: #ef4444;
+  box-shadow: 0 0 0 0 rgba(239,68,68, 0.6);
+  animation: rec-pulse 1.4s ease-out infinite;
+}
+@keyframes rec-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(239,68,68, 0.6); }
+  70%  { box-shadow: 0 0 0 8px rgba(239,68,68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239,68,68, 0); }
+}
+
+/* ========================================================
+   Shimmering "thinking" placeholder
+   ========================================================*/
+.shimmer-bg {
+  background: linear-gradient(
+    90deg,
+    rgba(255,255,255,0.04) 0%,
+    rgba(255,255,255,0.12) 50%,
+    rgba(255,255,255,0.04) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 2s linear infinite;
+}
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.gold-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(245,183,0,0.7) 0%,
+    rgba(255,255,255,0.95) 50%,
+    rgba(245,183,0,0.7) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 2.5s linear infinite;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* ========================================================
+   Caption fade-in
+   ========================================================*/
+.caption-enter {
+  animation: fade-up 0.35s ease-out;
+}
+@keyframes fade-up {
+  0%   { opacity: 0; transform: translateY(6px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+/* ========================================================
+   LiveKit overrides
+   ========================================================*/
+.lk-video-conference,
+.lk-room-container {
+  background: transparent !important;
+}
+.lk-control-bar { background: rgba(0,0,0,0.6) !important; }
+
+/* ========================================================
+   Scrollbar
+   ========================================================*/
+::-webkit-scrollbar             { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb       { background: rgba(255,255,255,0.15); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
+::-webkit-scrollbar-track       { background: transparent; }
+
+/* ========================================================
+   Focus rings (accessibility)
+   ========================================================*/
+:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ========================================================
+   Reduced motion fallback
+   ========================================================*/
+@media (prefers-reduced-motion: reduce) {
+  .aurora,
+  .orb-pulse,
+  .ring-out,
+  .rec-dot,
+  .shimmer-bg,
+  .gold-shimmer,
+  .caption-enter {
+    animation: none !important;
+  }
+}
+
+/* ========================================================
+   Mobile niceties
+   ========================================================*/
+/* Disable iOS tap highlight (we have proper hover/active states) */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Prevent text inflation on landscape rotate (Safari + Chromium) */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* iOS safe-area helpers */
+@supports (padding: max(0px)) {
+  .safe-bottom {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+  .safe-top {
+    padding-top: max(0px, env(safe-area-inset-top));
+  }
+}

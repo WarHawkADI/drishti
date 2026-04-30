@@ -1,0 +1,82 @@
+# Offer grid: matches profile features to (max_amount, base_rate, tenure_options).
+# The risk model adjusts the rate within +/- 0.5% of the base.
+# Match is first-fit; order matters (most specific first).
+
+version: "1.0.0"
+
+cells:
+  # ---- Tier A: Premium salaried ----
+  - id: A1
+    match:
+      cibil: [780, 900]
+      monthly_income: [100000, null]
+      employment_type: ["salaried", "salaried_pvt", "salaried_govt"]
+    offer:
+      max_amount: 1500000
+      base_rate_pct: 11.5
+      tenure_months: [12, 24, 36, 48, 60]
+
+  # ---- Tier B: Strong salaried ----
+  - id: B1
+    match:
+      cibil: [720, 780]
+      monthly_income: [75000, 100000]
+      employment_type: ["salaried", "salaried_pvt", "salaried_govt"]
+    offer:
+      max_amount: 800000
+      base_rate_pct: 13.5
+      tenure_months: [12, 24, 36, 48]
+
+  - id: B2
+    match:
+      cibil: [720, 780]
+      monthly_income: [50000, 75000]
+      employment_type: ["salaried", "salaried_pvt", "salaried_govt"]
+    offer:
+      max_amount: 500000
+      base_rate_pct: 14.0
+      tenure_months: [12, 24, 36]
+
+  # ---- Tier C: Mid-band salaried ----
+  - id: C1
+    match:
+      cibil: [680, 720]
+      monthly_income: [40000, null]
+      employment_type: ["salaried", "salaried_pvt", "salaried_govt"]
+    offer:
+      max_amount: 300000
+      base_rate_pct: 15.5
+      tenure_months: [12, 24, 36]
+
+  # ---- Tier D: Self-employed strong ----
+  - id: D1
+    match:
+      cibil: [720, 900]
+      monthly_income: [80000, null]
+      employment_type: ["self_employed"]
+    offer:
+      max_amount: 1000000
+      base_rate_pct: 13.5
+      tenure_months: [12, 24, 36, 48]
+
+  # ---- Tier E: Self-employed mid-band ----
+  - id: E1
+    match:
+      cibil: [680, 720]
+      monthly_income: [50000, null]
+      employment_type: ["self_employed"]
+    offer:
+      max_amount: 400000
+      base_rate_pct: 15.0
+      tenure_months: [12, 24, 36]
+
+  # ---- Tier F: Threshold-band fallback ----
+  - id: F1
+    match:
+      cibil: [650, 680]
+      monthly_income: [30000, null]
+      employment_type: ["salaried", "self_employed", "salaried_pvt", "salaried_govt"]
+    offer:
+      max_amount: 150000
+      base_rate_pct: 17.0
+      tenure_months: [12, 24]
