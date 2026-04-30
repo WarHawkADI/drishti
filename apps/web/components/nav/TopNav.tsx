@@ -70,7 +70,7 @@ export default function TopNav({ minimal = false }: { minimal?: boolean }) {
               );
             })}
             <a
-              href="https://github.com/iiitdards/drishti"
+              href="https://github.com/WarHawkADI/drishti"
               target="_blank"
               rel="noopener noreferrer"
               className="ml-2 inline-flex items-center gap-1 rounded-md border border-white/10 px-3 py-1.5 text-xs font-bold uppercase tracking-widest text-indigo-200/80 transition hover:border-white/20 hover:text-white"
@@ -127,7 +127,7 @@ export default function TopNav({ minimal = false }: { minimal?: boolean }) {
                 );
               })}
               <a
-                href="https://github.com/iiitdards/drishti"
+                href="https://github.com/WarHawkADI/drishti"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center justify-between rounded-lg border border-white/10 px-4 py-3 text-sm font-bold uppercase tracking-widest text-indigo-100/90 transition hover:bg-white/5"

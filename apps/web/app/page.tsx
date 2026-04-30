@@ -368,10 +368,10 @@ export default function LandingPage() {
               Alabhya Jha · IIIT Delhi
             </span>
             <Link
-              href="https://github.com/iiitdards/drishti"
+              href="https://github.com/WarHawkADI/drishti"
               className="text-gold transition hover:text-yellow-300 hover:underline"
             >
-              github.com/iiitdards/drishti
+              github.com/WarHawkADI/drishti
             </Link>
           </div>
         </footer>
