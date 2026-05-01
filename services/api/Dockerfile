@@ -22,8 +22,9 @@ RUN mkdir -p /data
 
 EXPOSE 8421
 HEALTHCHECK --interval=15s --timeout=5s --retries=5 \
-    CMD curl -fsS http://localhost:${PORT}/healthz || exit 1
+    CMD curl -fsS http://localhost:8421/healthz || exit 1
 
-# Shell form so ${PORT} expands at container start.  Railway injects its own
-# $PORT; if the var is missing (local docker run) we fall back to 8421.
-CMD ["sh", "-c", "exec python -m uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8421}"]
+# Bind a fixed port. Railway is told via env var PORT=8421 so its gateway
+# proxies here. Don't use shell form — the original exec form was the only
+# one that successfully promoted past Railway's healthcheck.
+CMD ["python", "-m", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8421"]
