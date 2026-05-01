@@ -1,0 +1,14 @@
+# Railway service config for the Next.js web app.
+# Drag this into the Railway dashboard or use `railway up` from apps/web.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "apps/web/Dockerfile"
+
+[deploy]
+# `next start` (no -p) reads $PORT from the env, which Railway injects.
+startCommand = "npm run start"
+healthcheckPath = "/"
+healthcheckTimeout = 60
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5

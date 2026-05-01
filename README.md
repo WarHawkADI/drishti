@@ -282,17 +282,33 @@ curl -X POST http://localhost:3421/api/token \
 
 ## Deploy free (so judges can open the link)
 
-The three processes deploy to three separate free-tier services. End-to-end cost:
-**₹0** for the demo window (a few hundred sessions). Total deploy time: **~15 minutes**.
+Two paths — both end-to-end **₹0** for the demo window. **Pick one.**
 
-| Process | Where | Plan | Why |
-|---|---|---|---|
-| **Web** (Next.js) | **Vercel** | Hobby (free, forever) | Edge CDN, free HTTPS, native Next.js, free preview URLs per branch |
-| **API** (FastAPI) | **Railway** | $5 monthly free credit | Persistent SQLite volume, ap-south-1 (Singapore) — closest free tier to India |
-| **Agent** (LiveKit worker) | **Railway** | Same project, second service | Long-running TCP connection to LiveKit Cloud — needs a worker that doesn't sleep |
-| **Voice/Video** | **LiveKit Cloud** | Free tier (1 GB-min/month) | Already where your dev keys point |
+### Path A — Everything on Railway · 1 platform · ~10 minutes  ⭐ recommended
 
-If Railway runs out of $5 credit, swap the API to **Render** (free, sleeps after 15min — judges wait ~30s on first hit) or **Fly.io** (`$5` credit, no sleep).
+Three services in a single Railway project. One dashboard, one set of env vars,
+one billing line. Railway's free tier ($5 monthly credit) covers all three at
+hackathon-scale traffic.
+
+| Service | Root dir | Notes |
+|---|---|---|
+| `web` | `apps/web` | Next.js · Railway autodetects buildpack |
+| `api` | `services/api` | FastAPI · attach a 1 GB volume at `/data` for the audit DB |
+| `agent` | `apps/agent` | Long-running Python worker · no public domain needed |
+
+**Voice/Video** transport remains **LiveKit Cloud** (free 1 GB-min/month — already where your dev keys point).
+
+### Path B — Web on Vercel + API/Agent on Railway · split
+
+| Process | Where | Why split |
+|---|---|---|
+| **Web** | **Vercel** Hobby (free forever) | Edge CDN globally → fastest load for Indian judges |
+| **API + Agent** | **Railway** | Same project, two services, persistent volume, no sleep |
+| **Voice/Video** | **LiveKit Cloud** | Free tier |
+
+Path B is ~200ms faster on first paint (Vercel's edge cache > Railway's Singapore origin). For a hackathon submission both are fine — pick A if you want one dashboard, B if you want the snappiest landing page.
+
+If Railway runs out of $5 credit mid-submission, swap the API to **Render** (free, sleeps after 15 min — judges wait ~30s on first hit) or **Fly.io** ($5 credit, no sleep).
 
 ### Step 1 — Push to GitHub
 
