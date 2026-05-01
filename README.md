@@ -17,7 +17,9 @@
 
 Team **IIITDards** — Aditya Rai · Alabhya Jha — IIIT Delhi
 
-[Live demo](#one-click-demo-paths) · [Architecture](#architecture) · [What's shipped vs roadmap](#whats-shipped-vs-roadmap) · [Run locally](#run-locally-three-terminals)
+### 🚀 [Live demo → drishti-iiitdards.up.railway.app](https://drishti-iiitdards.up.railway.app)
+
+[Demo paths](#one-click-demo-paths) · [Architecture](#architecture) · [What's shipped vs roadmap](#whats-shipped-vs-roadmap) · [Run locally](#run-locally-three-terminals)
 
 </div>
 
@@ -298,82 +300,111 @@ hackathon-scale traffic.
 
 **Voice/Video** transport remains **LiveKit Cloud** (free 1 GB-min/month — already where your dev keys point).
 
-### Path B — Web on Vercel + API/Agent on Railway · split
+### What's actually live (Path A — already shipped)
 
-| Process | Where | Why split |
-|---|---|---|
-| **Web** | **Vercel** Hobby (free forever) | Edge CDN globally → fastest load for Indian judges |
-| **API + Agent** | **Railway** | Same project, two services, persistent volume, no sleep |
-| **Voice/Video** | **LiveKit Cloud** | Free tier |
+> 🟢 **Submission URL:** **<https://drishti-iiitdards.up.railway.app>**
 
-Path B is ~200ms faster on first paint (Vercel's edge cache > Railway's Singapore origin). For a hackathon submission both are fine — pick A if you want one dashboard, B if you want the snappiest landing page.
+All three services run on Railway, project `drishti`. Each was created via the Railway CLI, deployed with `--path-as-root` so each subfolder's Dockerfile is the build context. Cross-service traffic uses Railway's private network (`${{api.RAILWAY_PRIVATE_DOMAIN}}` reference inside agent env). Audit chain persists on a 1 GB Railway volume mounted at `/data`.
 
 If Railway runs out of $5 credit mid-submission, swap the API to **Render** (free, sleeps after 15 min — judges wait ~30s on first hit) or **Fly.io** ($5 credit, no sleep).
 
-### Step 1 — Push to GitHub
+---
 
-You're already on `https://github.com/WarHawkADI/drishti`. If you've made local commits, push.
+### Reproducing the deploy from a fresh fork (~12 minutes)
 
-### Step 2 — Web on Vercel (3 minutes)
+#### 1 — Install Railway CLI + authorise
 
-1. Go to <https://vercel.com/new> → **Import** the GitHub repo
-2. Set the **Root Directory** to `apps/web`
-3. Framework auto-detected as **Next.js**
-4. **Environment variables** (Project Settings → Environment Variables):
-   ```
-   LIVEKIT_API_KEY              = <from .env>
-   LIVEKIT_API_SECRET           = <from .env>
-   LIVEKIT_URL                  = wss://drishti-rjrbppzf.livekit.cloud
-   NEXT_PUBLIC_LIVEKIT_URL      = wss://drishti-rjrbppzf.livekit.cloud
-   NEXT_PUBLIC_API_BASE_URL     = https://<your-api>.up.railway.app  (fill after step 3)
-   ```
-5. Deploy. URL will be like `https://drishti-iiitdards.vercel.app`
+```bash
+npm install -g @railway/cli
+railway login        # opens browser, click "Authorize"
+```
 
-### Step 3 — API on Railway (5 minutes)
+(Windows PowerShell users: `& "$env:APPDATA\npm\railway.ps1" login`.)
 
-1. Go to <https://railway.app/new> → **Deploy from GitHub repo**
-2. Pick your fork
-3. Railway scans the repo and offers to use `infra/railway.api.toml` (already in the repo). Confirm.
-4. **Service Settings → Source**: set **Root Directory** to `services/api`
-5. **Service Settings → Variables**:
-   ```
-   AUDIT_DB_PATH = /data/audit.db
-   CORS_ORIGINS  = https://drishti-iiitdards.vercel.app
-   PORT          = 8421
-   ```
-6. **Volume**: add a 1 GB volume mounted at `/data` so the SQLite audit chain survives redeploys
-7. **Service Settings → Networking**: Generate Public Domain
-8. Wait for build → grab the URL, paste it back into Vercel's `NEXT_PUBLIC_API_BASE_URL` and redeploy the web
+#### 2 — Create the project
 
-### Step 4 — Agent on Railway (5 minutes, same project)
+```bash
+cd drishti
+railway init --name drishti
+```
 
-1. In the same Railway project, **+ New Service → Deploy from GitHub** (same repo)
-2. Railway picks up `infra/railway.agent.toml`. Confirm.
-3. **Service Settings → Source**: set **Root Directory** to `apps/agent`
-4. **Service Settings → Variables** (all from `.env`):
-   ```
-   ANTHROPIC_API_KEY      = sk-ant-…
-   LIVEKIT_URL            = wss://drishti-rjrbppzf.livekit.cloud
-   LIVEKIT_API_KEY        = <from .env>
-   LIVEKIT_API_SECRET     = <from .env>
-   DEEPGRAM_API_KEY       = <from .env>
-   CARTESIA_API_KEY       = <from .env>
-   CARTESIA_VOICE_ID      = f6141af3-5f94-418c-80ed-a45d450e7e2e
-   API_BASE_URL           = https://<your-api>.up.railway.app
-   LOG_LEVEL              = INFO
-   ```
-5. The agent does NOT need a public domain — it dials out to LiveKit Cloud
-6. Watch the logs for `registered worker` — that means it's live
+#### 3 — Add the three services with all env vars in one shot
 
-### Step 5 — Test from incognito
+Replace the placeholder values with your own keys.
 
-Open `https://drishti-iiitdards.vercel.app` in an incognito window, type "Priya", hit **Start Loan Call**, allow camera/mic. You should hear Drishti within ~5 seconds.
+```bash
+# api
+railway add --service api \
+  --variables "AUDIT_DB_PATH=/data/audit.db" \
+  --variables "CORS_ORIGINS=*" \
+  --variables "LOG_LEVEL=INFO"
 
-### Step 6 — Submit
+# agent
+railway add --service agent \
+  --variables "ANTHROPIC_API_KEY=sk-ant-..." \
+  --variables "LIVEKIT_URL=wss://<your-livekit>.livekit.cloud" \
+  --variables "LIVEKIT_API_KEY=API..." \
+  --variables "LIVEKIT_API_SECRET=..." \
+  --variables "DEEPGRAM_API_KEY=..." \
+  --variables "CARTESIA_API_KEY=sk_car_..." \
+  --variables "CARTESIA_VOICE_ID=..." \
+  --variables 'API_BASE_URL=http://${{api.RAILWAY_PRIVATE_DOMAIN}}:8421' \
+  --variables "LOG_LEVEL=INFO"
 
-Drop the Vercel URL in the TenzorX submission portal. Done.
+# web
+railway add --service web \
+  --variables "LIVEKIT_API_KEY=API..." \
+  --variables "LIVEKIT_API_SECRET=..." \
+  --variables "LIVEKIT_URL=wss://<your-livekit>.livekit.cloud" \
+  --variables "NEXT_PUBLIC_LIVEKIT_URL=wss://<your-livekit>.livekit.cloud" \
+  --variables 'NEXT_PUBLIC_API_BASE_URL=https://${{api.RAILWAY_PUBLIC_DOMAIN}}' \
+  --variables "NODE_ENV=production"
+```
 
-> **Tip for judges' first-time experience:** the API at Railway free tier may cold-start on the first request. If the audit page or `/ops` looks empty, refresh once after ~15 seconds.
+#### 4 — Generate public domains for `api` and `web` (agent stays internal)
+
+```bash
+railway domain --service api
+railway domain --service web
+```
+
+#### 5 — Attach 1 GB volume to api so the audit chain persists
+
+```bash
+railway service api               # link to api
+railway volume add --mount-path /data
+```
+
+#### 6 — Upload code from each subfolder using `--path-as-root`
+
+This flag is what makes Railway treat the subfolder as the build root (otherwise it scans the parent git repo and Railpack errors out with "could not determine how to build").
+
+```bash
+railway up services/api  --service api    --path-as-root --detach
+railway up apps/agent    --service agent  --path-as-root --detach
+railway up apps/web      --service web    --path-as-root --detach
+```
+
+Each service has a `railway.toml` at its root with the right `startCommand` so Railway uses the dynamic `$PORT` it injects (the Dockerfile's hardcoded port is overridden).
+
+#### 7 — Optional: rename the auto-generated web URL
+
+Open the project at `railway.com` → web service → Settings → Networking → click the pencil icon next to the auto domain → set a friendly prefix (we used `drishti-iiitdards`). Submit.
+
+#### 8 — Verify
+
+```bash
+curl https://<your-api>.up.railway.app/healthz   # → {"status":"ok"}
+curl https://<your-api>.up.railway.app/readyz    # → checks: risk_model + policy_engine + audit_db
+curl https://<your-web>.up.railway.app/          # → Drishti landing
+railway service agent && railway logs --deployment | grep "registered worker"
+```
+
+#### 9 — Submit the web URL
+
+Drop the web URL into the TenzorX submission portal. Done.
+
+> **Cold-start tip:** the API may take ~15-30s on the very first request after a deploy. The web's first paint is instant because Next.js was pre-built.
 
 ---
 
