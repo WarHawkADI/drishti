@@ -90,10 +90,27 @@ export default function CallRoom({
 
   /* ---------- inbound data-channel events ---------- */
   useDataChannel((msg) => {
-    const evt = decodeEvent(msg.payload);
-    if (!evt || !("type" in evt)) return;
+    let evt: ReturnType<typeof decodeEvent>;
+    try {
+      evt = decodeEvent(msg.payload);
+    } catch {
+      // malformed payload — ignore silently in prod, log in dev
+      if (process.env.NODE_ENV === "development") {
+        console.warn("[CallRoom] invalid data-channel payload");
+      }
+      return;
+    }
+    if (!evt || !("type" in evt) || typeof evt.type !== "string") return;
     if (AGENT_EVENT_TYPES.has(evt.type)) {
-      apply(evt as AgentEvent);
+      try {
+        apply(evt as AgentEvent);
+      } catch (e) {
+        if (process.env.NODE_ENV === "development") {
+          console.error("[CallRoom] apply() threw on event", evt, e);
+        }
+      }
+    } else if (process.env.NODE_ENV === "development") {
+      console.warn("[CallRoom] unknown event type:", evt.type);
     }
   });
 
@@ -193,7 +210,9 @@ export default function CallRoom({
   }
 
   // Hide the orb when an interactive overlay is active, so the user focuses on the form.
-  const overlayActive = (panRequested && step === "pan") || !!consentRequested;
+  const overlayActive =
+    (panRequested && step === "pan") ||
+    (!!consentRequested && step === "consent");
 
   return (
     <div className="relative flex min-h-screen flex-col">
@@ -257,8 +276,12 @@ export default function CallRoom({
             />
           )}
 
-          {consentRequested && (
+          {/* Consent dialog auto-hides once the agent moves past the consent
+              step — verbal "I agree" through STT advances the flow without
+              requiring a click on the visual confirm button. */}
+          {consentRequested && step === "consent" && (
             <ConsentDialog
+              key={consentRequested.consent_type}
               prompt={consentRequested.prompt}
               consentType={consentRequested.consent_type}
               onAccept={(spoken) => {

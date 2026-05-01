@@ -22,6 +22,10 @@ class CaptionEvent:
     speaker: Literal["drishti", "customer"] = "drishti"
     text: str = ""
     is_final: bool = True
+    # Server-side wall-clock millis at the moment the caption is emitted.
+    # The UI sorts captions by this so even if reliable-data delivery shuffles
+    # arrival order, the displayed sequence matches the spoken sequence.
+    ts_ms: int = 0
     type: Literal["caption"] = "caption"
 
 
@@ -71,8 +75,14 @@ class SessionEnded:
 
 # ---------------- helpers ----------------
 def encode(event) -> bytes:
-    """Serialize an event dataclass for publishing on the data channel."""
-    return json.dumps(asdict(event), separators=(",", ":")).encode("utf-8")
+    """Serialize an event dataclass for publishing on the data channel.
+
+    `ensure_ascii=False` so the rupee symbol and Hindi captions survive the
+    round trip without being mangled into \\uXXXX escapes.
+    """
+    return json.dumps(
+        asdict(event), separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
 
 
 def decode(payload: bytes) -> dict | None:

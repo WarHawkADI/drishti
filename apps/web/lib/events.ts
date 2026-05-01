@@ -40,6 +40,8 @@ export type CaptionEvent = {
   speaker: "drishti" | "customer";
   text: string;
   is_final: boolean;
+  /** Server-stamped millis at emit time — UI sorts by this. */
+  ts_ms?: number;
 };
 
 export type OfferTier = {

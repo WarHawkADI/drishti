@@ -15,6 +15,20 @@ type Props = {
 };
 
 const PAN_REGEX = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
+const MAX_FILE_BYTES = 5 * 1024 * 1024; // 5 MB hard cap on PAN photo
+const MIN_DOB = "1925-01-01";
+const MIN_AGE_YEARS = 18;
+const MAX_AGE_YEARS = 80;
+
+function ageFromDob(dob: string): number {
+  const d = new Date(dob);
+  if (Number.isNaN(d.getTime())) return -1;
+  const now = new Date();
+  let age = now.getFullYear() - d.getFullYear();
+  const m = now.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age -= 1;
+  return age;
+}
 
 /**
  * PAN capture step.
@@ -35,11 +49,24 @@ export default function PanCapture({ onUpload }: Props) {
     const f = e.target.files?.[0];
     if (!f) return;
     if (!f.type.startsWith("image/")) {
-      setError("Please upload an image file (jpg/png).");
+      setError("Please upload an image (JPG / PNG).");
+      return;
+    }
+    if (f.size > MAX_FILE_BYTES) {
+      setError("Image is over 5 MB. Please use a smaller photo.");
       return;
     }
     const reader = new FileReader();
-    reader.onload = () => setPhotoDataUrl(reader.result as string);
+    reader.onerror = () => setError("Could not read that file. Try another.");
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== "string") {
+        setError("Unsupported file format.");
+        return;
+      }
+      setPhotoDataUrl(result);
+      setError(null);
+    };
     reader.readAsDataURL(f);
   }
 
@@ -50,13 +77,19 @@ export default function PanCapture({ onUpload }: Props) {
       setError("PAN must match format AAAAA9999A.");
       return;
     }
-    if (!name.trim()) return setError("Name as on PAN is required.");
+    const trimmedName = name.trim();
+    if (!trimmedName) return setError("Name as on PAN is required.");
+    if (trimmedName.length > 60) return setError("Name is too long.");
     if (!dob) return setError("Date of birth is required.");
-    // Photo is optional in v1: face match falls back to deterministic by-PAN scoring.
-    // A real PAN image would be required in production.
+
+    const age = ageFromDob(dob);
+    if (age < 0) return setError("Date of birth is invalid.");
+    if (age < MIN_AGE_YEARS) return setError("You must be at least 18 to apply.");
+    if (age > MAX_AGE_YEARS) return setError("Date of birth looks incorrect.");
+
     onUpload({
       panNumber: pan,
-      name: name.trim(),
+      name: trimmedName,
       dob,
       photoDataUrl: photoDataUrl || "",
     });
@@ -192,6 +225,8 @@ export default function PanCapture({ onUpload }: Props) {
             type="date"
             value={dob}
             onChange={(e) => setDob(e.target.value)}
+            min={MIN_DOB}
+            max={new Date().toISOString().split("T")[0]}
             aria-label="Date of birth"
             className="mt-1 w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-white focus:border-violet-400 focus:outline-none"
           />

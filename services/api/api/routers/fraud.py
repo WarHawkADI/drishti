@@ -10,11 +10,14 @@ from api.core import face_match, fraud_aggregator
 router = APIRouter()
 
 
+_MAX_DATA_URL = 6_000_000  # ~6 MB after base64 -> roughly 4.5 MB raw image
+
+
 class FaceMatchRequest(BaseModel):
-    pan_photo_data_url: str | None = None
-    live_photo_data_url: str | None = None
-    pan_number: str | None = None
-    threshold: float = 0.4
+    pan_photo_data_url: str | None = Field(None, max_length=_MAX_DATA_URL)
+    live_photo_data_url: str | None = Field(None, max_length=_MAX_DATA_URL)
+    pan_number: str | None = Field(None, max_length=10)
+    threshold: float = Field(0.4, ge=0.0, le=1.0)
 
 
 @router.post("/face-match")
@@ -33,16 +36,23 @@ def face_match_endpoint(req: FaceMatchRequest):
     }
 
 
+class ExtraSignal(BaseModel):
+    signal: str = Field(..., min_length=1, max_length=50)
+    severity: int = Field(2, ge=0, le=5)
+    reason: str = Field("", max_length=500)
+    evidence: dict = Field(default_factory=dict)
+
+
 class AggregateRequest(BaseModel):
-    declared_age: int | None = None
-    cv_age: float | None = None
-    declared_lat: float | None = None
-    declared_lng: float | None = None
-    actual_lat: float | None = None
-    actual_lng: float | None = None
-    face_cosine: float | None = None
-    face_threshold: float = 0.4
-    extra_signals: list[dict] = Field(default_factory=list)
+    declared_age: int | None = Field(None, ge=0, le=120)
+    cv_age: float | None = Field(None, ge=0, le=120)
+    declared_lat: float | None = Field(None, ge=-90, le=90)
+    declared_lng: float | None = Field(None, ge=-180, le=180)
+    actual_lat: float | None = Field(None, ge=-90, le=90)
+    actual_lng: float | None = Field(None, ge=-180, le=180)
+    face_cosine: float | None = Field(None, ge=0.0, le=1.0)
+    face_threshold: float = Field(0.4, ge=0.0, le=1.0)
+    extra_signals: list[ExtraSignal] = Field(default_factory=list, max_length=20)
 
 
 @router.post("/aggregate")
@@ -72,14 +82,12 @@ def aggregate(req: AggregateRequest):
 
     # Tack on caller-supplied extra signals (e.g., LLM-detected answer inconsistency)
     for x in req.extra_signals:
-        if not x.get("signal"):
-            continue
         signals.append(
             fraud_aggregator.FraudSignal(
-                signal=x["signal"],
-                severity=int(x.get("severity", 2)),
-                reason=str(x.get("reason", "")),
-                evidence=x.get("evidence", {}),
+                signal=x.signal,
+                severity=x.severity,
+                reason=x.reason,
+                evidence=x.evidence,
             )
         )
 

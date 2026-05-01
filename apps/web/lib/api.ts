@@ -62,4 +62,25 @@ export async function fetchHealth(): Promise<{ status: string }> {
   return get("/healthz");
 }
 
+export type AuditSessionSummary = {
+  session_id: string;
+  count: number;
+  first_ts: string | null;
+  last_ts: string | null;
+  decision: string | null;
+  outcome: string | null;
+  cibil: number | null;
+  fraud_severity_max: number;
+  latency_ms: number | null;
+};
+
+export type SessionsResponse = {
+  count: number;
+  sessions: AuditSessionSummary[];
+};
+
+export async function fetchSessions(limit = 50): Promise<SessionsResponse> {
+  return get<SessionsResponse>(`/audit/sessions?limit=${limit}`);
+}
+
 export const API_BASE_URL = BASE;

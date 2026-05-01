@@ -47,6 +47,43 @@ CARTESIA_VOICE_ID = os.getenv(
 
 
 # ----------------------------------------------------------------------
+# Defensive helpers
+# ----------------------------------------------------------------------
+async def _safe_publish(state: SessionState, payload: bytes) -> None:
+    """Publish to the data channel without ever crashing the caller.
+
+    Rooms can close mid-flight, especially when the customer disconnects while
+    the agent is still narrating a result. Swallow that here — the audit trail
+    is already on the API side; the UI event being lost is acceptable.
+    """
+    if not state.room:
+        log.warning("publish skipped — no room (event lost)")
+        return
+    try:
+        await state.room.local_participant.publish_data(payload, reliable=True)
+        # Log the event type so we can verify forms / step changes are leaving
+        # the agent. Truncated to avoid spamming with caption text.
+        try:
+            head = payload[:80].decode("utf-8", errors="replace")
+            log.info("publish ok: %s", head)
+        except Exception:
+            pass
+    except Exception as e:
+        log.warning("publish_data failed: %s", e)
+
+
+def _clamp(value: int, lo: int, hi: int, default: int) -> int:
+    """Sanitize integer args coming back from the LLM. Out-of-range -> default."""
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return default
+    if v < lo or v > hi:
+        return default
+    return v
+
+
+# ----------------------------------------------------------------------
 # Tool wiring
 # ----------------------------------------------------------------------
 def build_function_context(state: SessionState) -> llm.FunctionContext:
@@ -56,67 +93,57 @@ def build_function_context(state: SessionState) -> llm.FunctionContext:
 
     @fnc.ai_callable(description="Record verbal consent (consent_type like 'data_processing'). Call AFTER customer says 'yes'.")
     async def capture_consent(consent_type: str, spoken_text: str = "I agree") -> str:
-        # Surface a UI dialog as a visual confirmation; STT-captured spoken_text
-        # remains the authoritative record in the audit chain.
         if state.room:
-            await state.room.local_participant.publish_data(
-                evt.encode(evt.ConsentRequest(
-                    consent_type=consent_type,
-                    prompt=f"Verbal consent for: {consent_type.replace('_', ' ')}",
-                )),
-                reliable=True,
-            )
+            await _safe_publish(state, evt.encode(evt.ConsentRequest(
+                consent_type=consent_type,
+                prompt=f"Verbal consent for: {consent_type.replace('_', ' ')}",
+            )))
             state.step = "consent"
-            await state.room.local_participant.publish_data(
-                evt.encode(evt.StepChange(step="consent")), reliable=True
-            )
+            await _safe_publish(state, evt.encode(evt.StepChange(step="consent")))
         result = await t_consent.capture_consent(state, consent_type, spoken_text)
         return json.dumps(result)
 
     @fnc.ai_callable(description="Trigger UI to show the PAN upload form. Blocks until customer submits. Returns extracted PAN/name/dob.")
     async def request_pan_upload() -> str:
-        # Nudge UI to show form
         if state.room and state.local_pub:
-            await state.room.local_participant.publish_data(
-                evt.encode(evt.PanRequest()), reliable=True,
-            )
+            await _safe_publish(state, evt.encode(evt.PanRequest()))
             state.step = "pan"
-            await state.room.local_participant.publish_data(
-                evt.encode(evt.StepChange(step="pan")), reliable=True,
-            )
+            await _safe_publish(state, evt.encode(evt.StepChange(step="pan")))
         result = await t_doc.request_pan_upload(state)
-        # After PAN is captured the LLM moves into conversational Q&A
         if state.room:
             state.step = "qa"
-            await state.room.local_participant.publish_data(
-                evt.encode(evt.StepChange(step="qa")), reliable=True,
-            )
+            await _safe_publish(state, evt.encode(evt.StepChange(step="qa")))
         return json.dumps(result)
 
-    @fnc.ai_callable(description="Compare PAN photo to live face via ArcFace. Returns cosine similarity and pass/fail.")
+    @fnc.ai_callable(description="Compare PAN photo to live face via ArcFace; also runs age + geo fraud detectors. Returns face match plus any extra fraud signals.")
     async def verify_face() -> str:
         result = await t_face.verify_face(state)
-        # Push fraud flag to UI if mismatch
-        if not result["passed"] and state.room:
-            await state.room.local_participant.publish_data(
-                evt.encode(evt.FraudFlag(
-                    signal="face_mismatch",
-                    severity=result["severity"],
-                    reason=f"ArcFace cosine {result['cosine']} < {result['threshold']}",
-                )),
-                reliable=True,
-            )
-        await _push_signals(state, vision=f"face {result['cosine']:.2f}")
+        # Fire age + geo detectors immediately after face check so all 3 v1
+        # fraud signals run as a single phase. Failures here are non-fatal.
+        precheck = await t_fraud.precheck_age_and_geo(state)
+        if not result.get("passed") and state.room:
+            await _safe_publish(state, evt.encode(evt.FraudFlag(
+                signal="face_mismatch",
+                severity=result.get("severity", 4),
+                reason=f"ArcFace cosine {result.get('cosine', 0):.2f} < {result.get('threshold', 0.4):.2f}",
+            )))
+        await _push_signals(state, vision=f"face {result.get('cosine', 0):.2f}")
+        # Surface all fraud flags newly added by precheck
+        if precheck.get("signals_added", 0) and state.room:
+            for s in state.fraud_signals[-precheck["signals_added"]:]:
+                await _safe_publish(state, evt.encode(evt.FraudFlag(
+                    signal=s.get("signal", ""),
+                    severity=int(s.get("severity", 2)),
+                    reason=s.get("reason", ""),
+                )))
+        result["fraud_severity_max"] = state.fraud_severity_max
         return json.dumps(result)
 
     @fnc.ai_callable(description="Pull mock CIBIL bureau record by PAN. Returns CIBIL, existing loans, DPD.")
     async def check_bureau() -> str:
-        # Mark verification step beginning
         if state.room:
             state.step = "verify"
-            await state.room.local_participant.publish_data(
-                evt.encode(evt.StepChange(step="verify")), reliable=True,
-            )
+            await _safe_publish(state, evt.encode(evt.StepChange(step="verify")))
         result = await t_bureau.check_bureau(state)
         await _push_signals(state, cibil=result.get("cibil"))
         return json.dumps(result)
@@ -130,7 +157,16 @@ def build_function_context(state: SessionState) -> llm.FunctionContext:
         requested_amount: int,
         declared_city: str,
     ) -> str:
-        # Update profile with what LLM gathered from conversation
+        # ---- Sanitize args coming back from the LLM ----
+        age = _clamp(age, 18, 80, default=30)
+        monthly_income = _clamp(monthly_income, 0, 10_000_000, default=50_000)
+        requested_amount = _clamp(requested_amount, 0, 20_000_000, default=300_000)
+        employment_type = (employment_type or "salaried").lower().strip()
+        if employment_type not in {"salaried", "salaried_pvt", "salaried_govt", "self_employed", "other"}:
+            employment_type = "other"
+        declared_city = (declared_city or "Pune").strip()[:50]
+        loan_purpose = (loan_purpose or "other").strip()[:50]
+
         state.profile.declared_age = age
         state.profile.monthly_income = monthly_income
         state.profile.employment_type = employment_type
@@ -141,22 +177,16 @@ def build_function_context(state: SessionState) -> llm.FunctionContext:
         result = await t_offer.evaluate_offer(state)
         await _push_signals(state, risk=result.get("risk_band", "?"))
 
-        # Push offer event to UI
         if state.room:
-            await state.room.local_participant.publish_data(
-                evt.encode(evt.OfferShow(
-                    decision=result["decision"],
-                    offers=result.get("offers", []),
-                    reason=result.get("reason"),
-                    next_best_action=result.get("next_best_action"),
-                    shap_top3=result.get("shap_top3", []),
-                )),
-                reliable=True,
-            )
+            await _safe_publish(state, evt.encode(evt.OfferShow(
+                decision=result["decision"],
+                offers=result.get("offers", []),
+                reason=result.get("reason"),
+                next_best_action=result.get("next_best_action"),
+                shap_top3=result.get("shap_top3", []),
+            )))
             state.step = "offer"
-            await state.room.local_participant.publish_data(
-                evt.encode(evt.StepChange(step="offer")), reliable=True
-            )
+            await _safe_publish(state, evt.encode(evt.StepChange(step="offer")))
         return json.dumps(result)
 
     @fnc.ai_callable(description="Wait for the customer to select an offer tier (conservative/standard/stretch). Returns the selection.")
@@ -165,6 +195,14 @@ def build_function_context(state: SessionState) -> llm.FunctionContext:
 
     @fnc.ai_callable(description="Manually flag a fraud signal you've detected (e.g., answer inconsistency).")
     async def flag_fraud(signal: str, severity: int, reason: str) -> str:
+        # Sanitize args
+        signal = (signal or "unknown").strip()[:50]
+        severity = _clamp(severity, 0, 5, default=2)
+        reason = (reason or "").strip()[:500]
+        if state.room:
+            await _safe_publish(state, evt.encode(evt.FraudFlag(
+                signal=signal, severity=severity, reason=reason,
+            )))
         return json.dumps(await t_fraud.flag_fraud(state, signal, severity, reason))
 
     @fnc.ai_callable(description="End the session. outcome must be one of: approved, declined, fraud_block, human_review.")
@@ -172,15 +210,10 @@ def build_function_context(state: SessionState) -> llm.FunctionContext:
         result = await t_session.end_session(state, outcome)
         if state.room:
             state.step = "ended"
-            await state.room.local_participant.publish_data(
-                evt.encode(evt.StepChange(step="ended")), reliable=True,
-            )
-            await state.room.local_participant.publish_data(
-                evt.encode(evt.SessionEnded(
-                    outcome=outcome, audit_hash=result["audit_hash"],
-                )),
-                reliable=True,
-            )
+            await _safe_publish(state, evt.encode(evt.StepChange(step="ended")))
+            await _safe_publish(state, evt.encode(evt.SessionEnded(
+                outcome=outcome, audit_hash=result["audit_hash"],
+            )))
         return json.dumps(result)
 
     return fnc
@@ -190,9 +223,7 @@ async def _push_signals(state: SessionState, **kwargs):
     if not state.room:
         return
     sig = {k: str(v) for k, v in kwargs.items() if v is not None}
-    await state.room.local_participant.publish_data(
-        evt.encode(evt.SignalsUpdate(signals=sig)), reliable=True
-    )
+    await _safe_publish(state, evt.encode(evt.SignalsUpdate(signals=sig)))
 
 
 # ----------------------------------------------------------------------
@@ -201,10 +232,7 @@ async def _push_signals(state: SessionState, **kwargs):
 def install_data_handler(room: rtc.Room, state: SessionState):
     @room.on("data_received")
     def on_data(*args, **kwargs):  # noqa: ARG001
-        """Tolerate two LiveKit signatures:
-            on_data(data_packet)                       (rtc.DataPacket)
-            on_data(payload, participant, kind, topic) (legacy positional)
-        """
+        """Tolerate two LiveKit signatures and never crash on bad input."""
         try:
             if args and hasattr(args[0], "data"):
                 raw = args[0].data
@@ -218,9 +246,12 @@ def install_data_handler(room: rtc.Room, state: SessionState):
                 payload = json.loads(raw)
             else:
                 return
-        except Exception:
+        except Exception as e:
+            log.debug("data_received parse failed: %s", e)
             return
         kind = payload.get("type")
+        if not isinstance(kind, str):
+            return
 
         if kind == "consent.given":
             ctype = payload.get("consent_type", "data_processing")
@@ -237,10 +268,13 @@ def install_data_handler(room: rtc.Room, state: SessionState):
                 state.offer_future.set_result(payload)
 
         elif kind == "geo.report":
-            state.geo_actual = {
-                "lat": float(payload.get("lat", 0)),
-                "lng": float(payload.get("lng", 0)),
-            }
+            try:
+                state.geo_actual = {
+                    "lat": float(payload.get("lat", 0)),
+                    "lng": float(payload.get("lng", 0)),
+                }
+            except (TypeError, ValueError):
+                pass
 
 
 # ----------------------------------------------------------------------
@@ -252,17 +286,14 @@ async def entrypoint(ctx: JobContext):
     log.info("agent.connected room=%s", ctx.room.name)
 
     state = SessionState(session_id=ctx.room.name, room_name=ctx.room.name)
-    # Attach room to state so tools can publish UI events
     state.room = ctx.room  # type: ignore[attr-defined]
     state.local_pub = ctx.room.local_participant  # type: ignore[attr-defined]
 
     install_data_handler(ctx.room, state)
 
-    # Wait for the customer to join before starting
     participant = await ctx.wait_for_participant()
     log.info("customer.joined identity=%s", participant.identity)
 
-    # Personalise greeting
     customer_name = participant.name or "there"
     initial_ctx = llm.ChatContext().append(
         role="system",
@@ -273,6 +304,49 @@ async def entrypoint(ctx: JobContext):
 
     fnc = build_function_context(state)
 
+    # ---- Caption stream tee --------------------------------------------------
+    # By default, captions only fire on `agent_speech_committed` AFTER the full
+    # TTS audio plays — which can be 5+ seconds of silence in the UI. Hooking
+    # `before_tts_cb` lets us capture the LLM-produced text the moment it's
+    # done generating (typically 1-2s) and emit the caption then, while the
+    # TTS still streams audio to the customer's ears.
+    #
+    # IMPORTANT: livekit-agents calls before_tts_cb SYNCHRONOUSLY and expects
+    # `str | AsyncIterable[str]` back — so the callback itself must be a plain
+    # function. The agent caption is published WITHIN the teed coroutine via
+    # `await`, which preserves event ordering on the data channel: the user's
+    # caption (fired by user_speech_committed) lands BEFORE this one because
+    # this only runs after the LLM has fully consumed the user's turn.
+    async def _emit_drishti_caption(text: str) -> None:
+        import time
+        clean = (text or "").strip()
+        if state.room and clean:
+            await _safe_publish(
+                state,
+                evt.encode(evt.CaptionEvent(
+                    speaker="drishti", text=clean, is_final=True,
+                    ts_ms=int(time.time() * 1000),
+                )),
+            )
+
+    def _before_tts(_assistant, source):
+        if isinstance(source, str):
+            # Static path (assistant.say) — schedule async publish but tag
+            # the timestamp at decision time, not emit time, so the UI can
+            # sort robustly.
+            asyncio.create_task(_emit_drishti_caption(source))
+            return source
+
+        async def teed():
+            buf: list[str] = []
+            async for chunk in source:
+                buf.append(chunk)
+                yield chunk
+            # Awaited inside the teed coroutine — guarantees this runs after
+            # the LLM stream completes and BEFORE the next turn's caption.
+            await _emit_drishti_caption("".join(buf))
+        return teed()
+
     assistant = VoiceAssistant(
         vad=silero.VAD.load(),
         stt=deepgram.STT(model="nova-3-general", language="en-IN"),
@@ -281,30 +355,54 @@ async def entrypoint(ctx: JobContext):
         chat_ctx=initial_ctx,
         fnc_ctx=fnc,
         allow_interruptions=True,
+        before_tts_cb=_before_tts,
+        # Default is 1 — too low for our flow, where the LLM legitimately
+        # chains tool calls (capture_consent -> request_pan_upload, then
+        # request_pan_upload -> verify_face). With depth=1 the second tool
+        # is dropped/delayed, which causes the "form doesn't appear" lag.
+        max_nested_fnc_calls=5,
     )
 
-    # Forward final transcripts to the UI as captions
+    # ---- User caption chronology ----
+    # `user_speech_committed` fires AFTER the agent acknowledges the user's
+    # turn — which can be 3-8 seconds after they actually stopped speaking.
+    # If we stamp at commit-time, the user caption gets a later timestamp
+    # than the agent's reply (which fires from before_tts_cb when the LLM
+    # finishes generating). Result: chat order looks reversed.
+    #
+    # We anchor the user caption to the moment they STARTED speaking by
+    # stashing the timestamp on `user_started_speaking` and re-using it
+    # when the commit event finally fires.
+    import time as _time
+    user_speech_started_ts = {"ms": 0}
+
+    @assistant.on("user_started_speaking")
+    def on_user_started():
+        user_speech_started_ts["ms"] = int(_time.time() * 1000)
+
     @assistant.on("user_speech_committed")
     def on_user_speech(msg):
-        asyncio.create_task(
-            state.room.local_participant.publish_data(
-                evt.encode(evt.CaptionEvent(speaker="customer", text=msg.content, is_final=True)),
-                reliable=True,
-            )
-        )
+        if not state.room:
+            return
+        ts_ms = user_speech_started_ts["ms"] or int(_time.time() * 1000)
+        # reset for next turn
+        user_speech_started_ts["ms"] = 0
+        asyncio.create_task(_safe_publish(
+            state,
+            evt.encode(evt.CaptionEvent(
+                speaker="customer", text=msg.content,
+                is_final=True, ts_ms=ts_ms,
+            )),
+        ))
 
-    @assistant.on("agent_speech_committed")
-    def on_agent_speech(msg):
-        asyncio.create_task(
-            state.room.local_participant.publish_data(
-                evt.encode(evt.CaptionEvent(speaker="drishti", text=msg.content, is_final=True)),
-                reliable=True,
-            )
-        )
+    # Note: we deliberately DO NOT subscribe to `agent_speech_committed` for
+    # captions — that fires after TTS finishes and would just duplicate the
+    # caption emitted from `_before_tts` above.
 
     assistant.start(ctx.room, participant)
 
-    # Speak the first line
+    # Greeting is fired via assistant.say() which does flow through
+    # before_tts_cb, so the caption will be emitted automatically.
     await assistant.say(
         GREETING_TEMPLATE.format(name=customer_name),
         allow_interruptions=True,

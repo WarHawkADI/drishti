@@ -67,14 +67,31 @@ export const useCallStore = create<State>((set) => ({
           return { step: e.step };
         case "signals.update":
           return { signals: { ...state.signals, ...e.signals } };
-        case "caption":
+        case "caption": {
           if (!e.is_final) return {};
-          return {
-            captions: [
-              ...state.captions.slice(-30),
-              { speaker: e.speaker, text: e.text, ts: Date.now() },
-            ],
-          };
+          // Use the agent's emit-time stamp when present (it's a wall-clock
+          // millis from the agent process). Falls back to local now for
+          // backward compat. We sort by this so reliable-data shuffling
+          // doesn't show captions out of order.
+          const ts =
+            typeof e.ts_ms === "number" && e.ts_ms > 0 ? e.ts_ms : Date.now();
+          // Dedup: same speaker + same text within 2s = duplicate (React
+          // strict-mode double subscribe + LiveKit reliable redelivery).
+          const dup = state.captions.find(
+            (c) =>
+              c.speaker === e.speaker &&
+              c.text === e.text &&
+              Math.abs(c.ts - ts) < 2000,
+          );
+          if (dup) return {};
+          const next = [
+            ...state.captions.slice(-30),
+            { speaker: e.speaker, text: e.text, ts },
+          ];
+          // Defensive sort — wire-arrival order can shuffle slightly.
+          next.sort((a, b) => a.ts - b.ts);
+          return { captions: next };
+        }
         case "pan.request":
           return { panRequested: true };
         case "consent.request":

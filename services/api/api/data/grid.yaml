@@ -19,7 +19,7 @@ cells:
   # ---- Tier B: Strong salaried ----
   - id: B1
     match:
-      cibil: [720, 780]
+      cibil: [720, 800]
       monthly_income: [75000, 100000]
       employment_type: ["salaried", "salaried_pvt", "salaried_govt"]
     offer:

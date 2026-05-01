@@ -142,19 +142,44 @@ export default function EndScreen({
               <p className="text-xs font-bold uppercase tracking-widest text-amber-300">
                 Next Best Action
               </p>
-              <p className="mt-2 text-sm text-amber-100">
+              <p className="mt-2 break-words text-sm text-amber-100">
                 {offer.nextBestAction}
               </p>
               {offer.reason && (
-                <p className="mt-3 border-t border-amber-300/20 pt-3 text-[11px] italic text-amber-200/80">
+                <p className="mt-3 border-t border-amber-300/20 pt-3 text-[11px] italic text-amber-200/80 break-words">
                   Why: {offer.reason}
                 </p>
               )}
             </div>
           )}
 
-          {/* Audit hash with copy button */}
-          {ended.auditHash && <AuditHashRow hash={ended.auditHash} />}
+          {/* Human review / fraud block — surface reason + NBA if any */}
+          {(ended.outcome === "human_review" || ended.outcome === "fraud_block") &&
+            (offer.reason || offer.nextBestAction) && (
+              <div className="mx-auto mt-6 max-w-md rounded-xl border border-violet-400/30 bg-violet-500/10 p-5 text-left">
+                <p className="text-xs font-bold uppercase tracking-widest text-violet-200">
+                  What happens next
+                </p>
+                <p className="mt-2 break-words text-sm text-violet-50">
+                  {offer.nextBestAction ||
+                    "A loan officer will call you back within 24 hours."}
+                </p>
+                {offer.reason && (
+                  <p className="mt-3 border-t border-violet-300/20 pt-3 text-[11px] italic text-violet-200/80 break-words">
+                    {offer.reason}
+                  </p>
+                )}
+              </div>
+            )}
+
+          {/* Audit hash — always rendered when present so users have proof */}
+          {ended.auditHash ? (
+            <AuditHashRow hash={ended.auditHash} />
+          ) : (
+            <p className="mt-6 text-center text-[10px] text-indigo-300/50">
+              Audit chain unavailable for this session.
+            </p>
+          )}
         </div>
 
         <div className="mt-6 flex justify-center">

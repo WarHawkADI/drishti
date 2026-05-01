@@ -6,7 +6,8 @@ import { Video } from "lucide-react";
 
 /**
  * Picture-in-picture self-view of the customer's camera.
- * Anchored bottom-right of the call screen as a trust signal.
+ * Anchored top-right of the call screen — keeps clear of the orb (centered)
+ * and the captions (bottom-centered).
  */
 export default function SelfVideoTile() {
   const trackRefs = useTracks([Track.Source.Camera]);
@@ -14,7 +15,7 @@ export default function SelfVideoTile() {
 
   return (
     <div
-      className="pointer-events-none absolute bottom-4 right-4 z-10 flex h-28 w-44 select-none items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/60 shadow-2xl backdrop-blur sm:h-32 sm:w-52"
+      className="pointer-events-none absolute right-3 top-3 z-10 flex h-24 w-36 select-none items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-black/60 shadow-2xl backdrop-blur sm:right-4 sm:top-4 sm:h-28 sm:w-44 lg:h-32 lg:w-52"
       aria-label="Your camera preview"
     >
       {localTrack && localTrack.publication?.track ? (

@@ -148,7 +148,7 @@ export default function LandingPage() {
               </span>
               <span className="flex items-center gap-1.5">
                 <Mic2 className="h-3.5 w-3.5 text-sky-400" />
-                Sarvam Voice
+                Voice AI · Sarvam-ready
               </span>
               <span className="flex items-center gap-1.5">
                 <Zap className="h-3.5 w-3.5 text-gold" />

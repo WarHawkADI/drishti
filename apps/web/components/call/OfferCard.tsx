@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
 import { CheckCircle2, Sparkles, TrendingUp, TrendingDown } from "lucide-react";
 import { cn, formatINR } from "@/lib/utils";
 import type { OfferTier } from "@/lib/events";
+import { useCallStore } from "@/lib/store";
 
 type Props = {
   offer: {
@@ -42,7 +42,9 @@ const TIER_META: Record<
 };
 
 export default function OfferCard({ offer, onSelect }: Props) {
-  const [selected, setSelected] = useState<OfferTier["tier"] | null>(null);
+  // Read selection from the global store so it persists across re-renders
+  // (otherwise a fraud-flag update or re-mount would visually un-select).
+  const selected = useCallStore((s) => s.selectedTier);
 
   return (
     <div className="space-y-3 caption-enter">
@@ -65,10 +67,7 @@ export default function OfferCard({ offer, onSelect }: Props) {
           <button
             key={o.tier}
             type="button"
-            onClick={() => {
-              setSelected(o.tier);
-              onSelect(o.tier);
-            }}
+            onClick={() => onSelect(o.tier)}
             aria-pressed={isSel ? "true" : "false"}
             className={cn(
               "group relative block w-full overflow-hidden rounded-xl border-2 p-4 text-left transition-all duration-300",

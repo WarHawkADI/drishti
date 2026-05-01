@@ -3,11 +3,15 @@ Tool: evaluate_offer.
 
 Combines risk scoring + policy evaluation in one call. Returns a structured
 decision the LLM can narrate. Updates SessionState with the result.
+
+Hardened: HTTP failures on either /risk/score or /policy/evaluate produce a
+typed `human_review` recommendation rather than crashing the tool — the LLM
+is instructed in the prompt to politely route to a human and end the session.
 """
 
 from __future__ import annotations
 
-import asyncio
+import logging
 import os
 
 import httpx
@@ -16,6 +20,7 @@ from .. import audit_client
 from ..state import SessionState
 
 API_BASE = os.getenv("API_BASE_URL", "http://localhost:8421")
+log = logging.getLogger("drishti.tool.offer")
 
 
 def _estimate_emi(principal: float, rate_pct: float = 14.0, tenure_months: int = 36) -> float:
@@ -34,12 +39,8 @@ def _build_profile(state: SessionState) -> dict:
     cibil = bureau.get("cibil", 720)
     income = max(p.monthly_income or 50_000, 1)
 
-    # Existing obligations: prefer bureau-supplied EMI if present, else estimate
-    # by # of active loans * a typical retail-loan EMI.
     existing_emi = bureau.get("existing_emi") or bureau.get("existing_loans", 0) * 8_500
-    # Projected EMI for the requested loan (worst-case base rate)
     projected_emi = _estimate_emi(requested, rate_pct=14.0, tenure_months=36)
-    # DTI = (existing + projected) / income, clamped to [0, 0.99]
     dti = round(min((existing_emi + projected_emi) / income, 0.99), 3)
 
     return {
@@ -59,29 +60,51 @@ def _build_profile(state: SessionState) -> dict:
 async def evaluate_offer(state: SessionState) -> dict:
     profile = _build_profile(state)
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        # Risk
-        risk_r = await client.post(f"{API_BASE}/risk/score", json=profile)
-        risk_r.raise_for_status()
-        risk = risk_r.json()
-        state.risk_score = risk["risk_score"]
-        state.risk_band = risk["risk_band"]
-        state.propensity = risk["propensity"]
-        state.shap_top3 = risk.get("shap_top3", [])
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            risk_r = await client.post(f"{API_BASE}/risk/score", json=profile)
+            risk_r.raise_for_status()
+            risk = risk_r.json()
+            state.risk_score = risk["risk_score"]
+            state.risk_band = risk["risk_band"]
+            state.propensity = risk["propensity"]
+            state.shap_top3 = risk.get("shap_top3", [])
 
-        # Policy
-        policy_payload = {
-            "profile": profile,
-            "risk": {
-                "risk_score": risk["risk_score"],
-                "propensity": risk["propensity"],
-                "fraud_severity_max": state.fraud_severity_max,
-                "shap_top3": risk.get("shap_top3", []),
-            },
+            policy_payload = {
+                "profile": profile,
+                "risk": {
+                    "risk_score": risk["risk_score"],
+                    "propensity": risk["propensity"],
+                    "fraud_severity_max": state.fraud_severity_max,
+                    "shap_top3": risk.get("shap_top3", []),
+                },
+            }
+            pol_r = await client.post(f"{API_BASE}/policy/evaluate", json=policy_payload)
+            pol_r.raise_for_status()
+            decision = pol_r.json()
+    except Exception as e:
+        log.warning("evaluate_offer pipeline failed err=%s", e)
+        await audit_client.append(
+            state.session_id,
+            "tool.failed",
+            {"tool": "evaluate_offer", "reason": "policy_or_risk_unavailable",
+             "err": str(e)[:200]},
+        )
+        # Surface a clean human_review recommendation; the prompt tells the LLM
+        # to politely route to a human and end the session on tool failure.
+        return {
+            "decision": "human_review",
+            "offers": [],
+            "reason": "We are experiencing a temporary technical issue.",
+            "next_best_action":
+                "A human colleague will review your application and reach you within 24 hours.",
+            "matched_cell": None,
+            "rules_fired": [],
+            "risk_score": None,
+            "risk_band": None,
+            "shap_top3": [],
+            "ok": False,
         }
-        pol_r = await client.post(f"{API_BASE}/policy/evaluate", json=policy_payload)
-        pol_r.raise_for_status()
-        decision = pol_r.json()
 
     state.decision = decision["decision"]
 
@@ -107,16 +130,23 @@ async def evaluate_offer(state: SessionState) -> dict:
         "risk_score": risk["risk_score"],
         "risk_band": risk["risk_band"],
         "shap_top3": risk.get("shap_top3", []),
+        "ok": True,
     }
 
 
 async def wait_for_offer_selection(state: SessionState, timeout: float = 120.0) -> dict:
     """Wait for the customer to select a tier on the UI."""
+    import asyncio
     loop = asyncio.get_event_loop()
     state.offer_future = loop.create_future()
     try:
         sel = await asyncio.wait_for(state.offer_future, timeout=timeout)
     except asyncio.TimeoutError:
+        await audit_client.append(
+            state.session_id,
+            "offer.selection_timeout",
+            {"timeout_seconds": timeout},
+        )
         return {"ok": False, "reason": "offer_selection_timeout"}
     finally:
         state.offer_future = None

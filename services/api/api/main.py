@@ -93,13 +93,74 @@ async def root():
 
 @app.get("/healthz", tags=["meta"])
 async def healthz():
+    """Liveness — process is alive. Always 200 unless the worker is dead."""
     return {"status": "ok"}
+
+
+@app.get("/readyz", tags=["meta"])
+async def readyz():
+    """Readiness — every dependency is loaded. 503 if anything is missing.
+
+    Useful for k8s-style traffic gating: pod stays out of the LB until
+    risk_model is loaded, audit DB is writable, and policy YAMLs parsed.
+    """
+    checks: dict[str, str] = {}
+    overall_ok = True
+
+    # 1. Risk model
+    try:
+        from api.core.risk_model import get_model
+        m = get_model()
+        checks["risk_model"] = "fallback" if getattr(m, "fallback", False) else "ok"
+    except Exception as e:
+        checks["risk_model"] = f"fail: {type(e).__name__}"
+        overall_ok = False
+
+    # 2. Policy engine (rules + grid YAMLs)
+    try:
+        from api.core.policy_engine import get_engine
+        e = get_engine()
+        if not e._grid.get("cells"):  # noqa: SLF001
+            checks["policy_engine"] = "fail: empty grid"
+            overall_ok = False
+        else:
+            checks["policy_engine"] = (
+                f"ok ({len(e._grid['cells'])} cells, "  # noqa: SLF001
+                f"{len(e._rules.get('rules', []))} rules)"
+            )
+    except Exception as e:
+        checks["policy_engine"] = f"fail: {type(e).__name__}"
+        overall_ok = False
+
+    # 3. Audit DB writability
+    try:
+        from api.core.audit_chain import init_db
+        init_db()
+        checks["audit_db"] = "ok"
+    except Exception as e:
+        checks["audit_db"] = f"fail: {type(e).__name__}"
+        overall_ok = False
+
+    if overall_ok:
+        return {"status": "ready", "checks": checks}
+    return JSONResponse(
+        status_code=503,
+        content={"status": "not_ready", "checks": checks},
+    )
 
 
 @app.exception_handler(Exception)
 async def unhandled_exc(_, exc: Exception):  # pragma: no cover
-    log.exception("unhandled.error", err=str(exc))
-    return JSONResponse(status_code=500, content={"error": str(exc)})
+    """Mask internal errors. The full trace goes to logs; clients get a sanitized
+    response with an error_id they can quote in support tickets.
+    """
+    import uuid
+    err_id = uuid.uuid4().hex[:12]
+    log.exception("unhandled.error", err_id=err_id, err=str(exc))
+    return JSONResponse(
+        status_code=500,
+        content={"error": "internal_error", "error_id": err_id},
+    )
 
 
 app.include_router(policy.router, prefix="/policy", tags=["policy"])
