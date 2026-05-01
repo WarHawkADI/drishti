@@ -10,6 +10,7 @@ The LLM does NOT decide. The LLM only narrates what this engine returned.
 
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -89,10 +90,103 @@ def _in_range(value: float, lo, hi) -> bool:
     return True
 
 
-def _eval_rule(expr: str, profile: Profile, risk: RiskInput) -> bool:
-    safe_globals = {"__builtins__": {}}
-    safe_locals = {"profile": profile, "risk": risk}
-    return bool(eval(expr, safe_globals, safe_locals))  # noqa: S307
+# ----------------------------------------------------------------------
+# Safe expression evaluator for rules.yaml.
+#
+# We previously used eval() with `__builtins__={}`. That is NOT a real
+# sandbox — escapes via `obj.__class__.__bases__[0].__subclasses__()` are
+# trivial. This walker parses the expression once with `ast.parse(mode='eval')`
+# and rejects any node type we don't explicitly allow:
+#   - Constants (int/float/str/bool/None)
+#   - Names: only `profile` and `risk`
+#   - Attribute access (single level)
+#   - List / Tuple of literals
+#   - Compare (chained), BoolOp (and/or), UnaryOp (not / unary +/-)
+#   - In / NotIn membership tests
+# Anything else — Call, Subscript, Lambda, Import, dunder access — raises.
+# ----------------------------------------------------------------------
+_ALLOWED_NAMES = frozenset({"profile", "risk"})
+
+
+class _SafeEvaluator(ast.NodeVisitor):
+    def __init__(self, profile: "Profile", risk: "RiskInput") -> None:
+        self._scope: dict[str, Any] = {"profile": profile, "risk": risk}
+
+    def visit_Expression(self, node: ast.Expression) -> Any:
+        return self.visit(node.body)
+
+    def visit_Constant(self, node: ast.Constant) -> Any:
+        if isinstance(node.value, (int, float, str, bool, type(None))):
+            return node.value
+        raise SyntaxError(f"literal type not allowed: {type(node.value).__name__}")
+
+    def visit_Name(self, node: ast.Name) -> Any:
+        if node.id not in _ALLOWED_NAMES:
+            raise SyntaxError(f"unknown name: {node.id}")
+        return self._scope[node.id]
+
+    def visit_Attribute(self, node: ast.Attribute) -> Any:
+        if node.attr.startswith("_"):
+            raise SyntaxError(f"private attribute access denied: {node.attr}")
+        return getattr(self.visit(node.value), node.attr)
+
+    def visit_List(self, node: ast.List) -> list:
+        return [self.visit(e) for e in node.elts]
+
+    def visit_Tuple(self, node: ast.Tuple) -> tuple:
+        return tuple(self.visit(e) for e in node.elts)
+
+    def visit_BoolOp(self, node: ast.BoolOp) -> bool:
+        if isinstance(node.op, ast.And):
+            return all(bool(self.visit(v)) for v in node.values)
+        if isinstance(node.op, ast.Or):
+            return any(bool(self.visit(v)) for v in node.values)
+        raise SyntaxError(f"unsupported boolop: {type(node.op).__name__}")
+
+    def visit_UnaryOp(self, node: ast.UnaryOp) -> Any:
+        if isinstance(node.op, ast.Not):
+            return not self.visit(node.operand)
+        if isinstance(node.op, ast.USub):
+            return -self.visit(node.operand)
+        if isinstance(node.op, ast.UAdd):
+            return +self.visit(node.operand)
+        raise SyntaxError(f"unsupported unary op: {type(node.op).__name__}")
+
+    def visit_Compare(self, node: ast.Compare) -> bool:
+        left = self.visit(node.left)
+        for op, right_node in zip(node.ops, node.comparators):
+            right = self.visit(right_node)
+            if isinstance(op, ast.Lt):
+                ok = left < right
+            elif isinstance(op, ast.LtE):
+                ok = left <= right
+            elif isinstance(op, ast.Gt):
+                ok = left > right
+            elif isinstance(op, ast.GtE):
+                ok = left >= right
+            elif isinstance(op, ast.Eq):
+                ok = left == right
+            elif isinstance(op, ast.NotEq):
+                ok = left != right
+            elif isinstance(op, ast.In):
+                ok = left in right
+            elif isinstance(op, ast.NotIn):
+                ok = left not in right
+            else:
+                raise SyntaxError(f"unsupported comparator: {type(op).__name__}")
+            if not ok:
+                return False
+            left = right  # support chained comparisons (a < b < c)
+        return True
+
+    def generic_visit(self, node: ast.AST) -> Any:
+        raise SyntaxError(f"disallowed expression node: {type(node).__name__}")
+
+
+def _eval_rule(expr: str, profile: "Profile", risk: "RiskInput") -> bool:
+    """Safely evaluate a YAML-supplied rule expression. Never runs arbitrary code."""
+    tree = ast.parse(expr, mode="eval")
+    return bool(_SafeEvaluator(profile, risk).visit(tree))
 
 
 def _emi(p: int, rate_pct: float, n: int) -> int:

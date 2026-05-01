@@ -73,10 +73,14 @@ export default function EndScreen({
   onLeave,
 }: Props) {
   const meta = OUTCOMES[ended.outcome] || OUTCOMES.declined;
-  const chosen =
+  // `chosen` is only meaningful when outcome === "approved". For declined /
+  // human_review / fraud_block paths, `offer.offers` may legitimately be empty;
+  // guard against `chosen.amount` access on undefined later in the JSX.
+  const chosen: OfferTier | undefined =
     (selectedTier && offer.offers.find((o) => o.tier === selectedTier)) ||
     offer.offers[1] ||
-    offer.offers[0];
+    offer.offers[0] ||
+    undefined;
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-ink px-4 py-8 sm:py-12">

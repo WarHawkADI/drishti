@@ -55,9 +55,7 @@ const config: Config = {
         "fade-up": "fade-up 0.4s ease-out",
         "shimmer": "shimmer 2.5s linear infinite",
         "ping-slow": "ping-slow 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite",
-      },
-      animation: {
-        pulse: "pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite",
+        "pulse": "pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite",
         "pulse-slow": "pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite",
       },
     },

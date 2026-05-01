@@ -43,8 +43,15 @@ export default function SessionPage() {
         if (!cancelled) setPermState("granted");
       } catch (err) {
         if (cancelled) return;
-        const e = err as DOMException;
-        if (e?.name === "NotFoundError" || e?.name === "OverconstrainedError") {
+        // Type-guard the error: blind `as DOMException` crashes on iOS Safari
+        // when getUserMedia rejects with a plain Error or null.
+        const name =
+          err instanceof DOMException
+            ? err.name
+            : err instanceof Error
+              ? err.name
+              : "UnknownError";
+        if (name === "NotFoundError" || name === "OverconstrainedError") {
           setPermState("no-device");
         } else {
           setPermState("denied");

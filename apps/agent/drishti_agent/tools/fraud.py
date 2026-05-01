@@ -101,10 +101,18 @@ async def precheck_age_and_geo(state: SessionState) -> dict:
             declared_age = 25
         cv_age = 42.0
         # Bangalore declared vs Delhi IP -> haversine ~1900 km -> SEV 2.
-        declared_lat = declared_lat or 12.97
-        declared_lng = declared_lng or 77.59
-        actual_lat = actual_lat or 28.61
-        actual_lng = actual_lng or 77.20
+        # IMPORTANT: only fill defaults when the field is truly unset. Using
+        # `x or default` would also match valid lat=0 (equator), so use
+        # `is None` explicitly. We also never overwrite a customer-declared
+        # value — only paint demo coords on top of None.
+        if declared_lat is None:
+            declared_lat = 12.97
+        if declared_lng is None:
+            declared_lng = 77.59
+        if actual_lat is None:
+            actual_lat = 28.61
+        if actual_lng is None:
+            actual_lng = 77.20
 
     # Nothing to score on this branch -> exit cleanly.
     if cv_age is None and (actual_lat is None or declared_lat is None):

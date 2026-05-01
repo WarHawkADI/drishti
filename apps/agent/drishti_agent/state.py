@@ -73,8 +73,11 @@ class SessionState:
     geo_actual: dict[str, float] | None = None  # {lat, lng}
     live_face_data_url: str | None = None
 
-    # Step tracker
+    # Step tracker. Mutations are guarded by step_lock so concurrent tool
+    # callbacks (now possible with max_nested_fnc_calls > 1) cannot publish
+    # StepChange events out of order.
     step: str = "greet"
+    step_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     # Room handle (set by orchestrator after connect; tools publish data via this)
     room: Any | None = None

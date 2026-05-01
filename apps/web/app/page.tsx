@@ -20,8 +20,19 @@ import EyeMark from "@/components/brand/EyeMark";
 import TopNav from "@/components/nav/TopNav";
 
 function generateSessionId(): string {
+  // 128 bits of entropy via Web Crypto. Math.random() is biased, predictable
+  // on some browsers, and only ~52 bits — guessable enough to enable session
+  // hijacking by URL enumeration. crypto.getRandomValues is universal in modern
+  // browsers (and falls back gracefully on legacy environments via the SSR-
+  // safe fallback below).
   const ts = Date.now().toString(36);
-  const rand = Math.random().toString(36).slice(2, 8);
+  const buf = new Uint8Array(8);
+  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+    crypto.getRandomValues(buf);
+  } else {
+    for (let i = 0; i < buf.length; i++) buf[i] = Math.floor(Math.random() * 256);
+  }
+  const rand = Array.from(buf, (b) => b.toString(36).padStart(2, "0")).join("");
   return `drs_${ts}${rand}`;
 }
 

@@ -170,9 +170,32 @@ export default function CallRoom({
 
   function publishUi(evt: UiEvent) {
     if (!localParticipant) return;
-    localParticipant
-      .publishData(encodeEvent(evt), { reliable: true })
-      .catch(() => {});
+    // Critical events (consent.given, pan.uploaded, offer.selected) must not
+    // fail silently — the agent is waiting on them. We retry once and log to
+    // the console in dev. For "info-only" events (geo.report) a single
+    // attempt is enough.
+    const isCritical =
+      evt.type === "consent.given" ||
+      evt.type === "pan.uploaded" ||
+      evt.type === "offer.selected";
+
+    const send = (attempt: number): void => {
+      localParticipant
+        .publishData(encodeEvent(evt), { reliable: true })
+        .catch((err) => {
+          if (process.env.NODE_ENV === "development") {
+            console.warn(
+              `[CallRoom] publishData(${evt.type}) attempt ${attempt} failed`,
+              err,
+            );
+          }
+          if (isCritical && attempt === 1) {
+            // single retry after 400ms
+            setTimeout(() => send(2), 400);
+          }
+        });
+    };
+    send(1);
   }
 
   function toggleMic() {

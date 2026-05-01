@@ -151,15 +151,33 @@ async def readyz():
 
 @app.exception_handler(Exception)
 async def unhandled_exc(_, exc: Exception):  # pragma: no cover
-    """Mask internal errors. The full trace goes to logs; clients get a sanitized
-    response with an error_id they can quote in support tickets.
+    """Classify exceptions to the right HTTP status, then mask internals.
+
+    Validation/lookup errors that escape Pydantic are 4xx, not 5xx. The full
+    trace always goes to logs; clients get a sanitized response with an
+    error_id they can quote in support tickets.
     """
     import uuid
     err_id = uuid.uuid4().hex[:12]
-    log.exception("unhandled.error", err_id=err_id, err=str(exc))
+
+    # Map common Python exceptions to appropriate 4xx codes.
+    if isinstance(exc, ValueError):
+        status, code = 400, "invalid_request"
+    elif isinstance(exc, KeyError):
+        status, code = 422, "missing_field"
+    elif isinstance(exc, FileNotFoundError):
+        status, code = 404, "not_found"
+    elif isinstance(exc, PermissionError):
+        status, code = 403, "forbidden"
+    elif isinstance(exc, TimeoutError):
+        status, code = 504, "upstream_timeout"
+    else:
+        status, code = 500, "internal_error"
+
+    log.exception("unhandled.error", err_id=err_id, status=status, err=str(exc))
     return JSONResponse(
-        status_code=500,
-        content={"error": "internal_error", "error_id": err_id},
+        status_code=status,
+        content={"error": code, "error_id": err_id},
     )
 
 

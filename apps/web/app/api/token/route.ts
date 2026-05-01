@@ -96,7 +96,17 @@ export async function POST(req: NextRequest) {
   });
 
   const token = await at.toJwt();
-  const url = process.env.NEXT_PUBLIC_LIVEKIT_URL || process.env.LIVEKIT_URL || "";
+  const url = process.env.NEXT_PUBLIC_LIVEKIT_URL || process.env.LIVEKIT_URL;
+
+  if (!url) {
+    // Don't ship an empty url to the client — they'd see an inscrutable
+    // WebRTC handshake error. Fail loudly here with a generic message
+    // (no env-var name leak).
+    return NextResponse.json(
+      { error: "Service is not configured. Contact support." },
+      { status: 500 },
+    );
+  }
 
   return NextResponse.json({
     token,

@@ -94,8 +94,18 @@ def get_model() -> _Model:
                 str(MODEL_PATH), providers=["CPUExecutionProvider"]
             )
             meta = json.loads(META_PATH.read_text(encoding="utf-8"))
+            # Sanity-check: feature count we emit must match the ONNX input shape.
+            # If FEATURES list is reordered/extended without retraining the model,
+            # inference would silently produce garbage scores. Fail loudly here.
+            input_meta = session.get_inputs()[0]
+            shape = input_meta.shape  # e.g. ['batch', 7]
+            if len(shape) >= 2 and isinstance(shape[1], int) and shape[1] != len(FEATURES):
+                raise ValueError(
+                    f"ONNX input expects {shape[1]} features but FEATURES has "
+                    f"{len(FEATURES)}: {FEATURES}"
+                )
             _model = _Model(session=session, scaler=meta.get("scaler"), fallback=False)
-            log.info("risk_model.loaded onnx=%s", MODEL_PATH.name)
+            log.info("risk_model.loaded onnx=%s features=%d", MODEL_PATH.name, len(FEATURES))
             return _model
         except Exception as e:
             log.warning("risk_model.onnx_load_failed err=%s", e)

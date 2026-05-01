@@ -24,8 +24,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import random
 import sqlite3
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -133,13 +135,11 @@ def append(session_id: str, event: str, data: dict) -> dict:
                 }
             except sqlite3.IntegrityError as e:
                 # UNIQUE(session_id, seq) violation -> someone else won the race.
-                # Roll back, retry from the top with the now-fresh last_row.
                 try:
                     c.execute("ROLLBACK")
                 except sqlite3.OperationalError:
                     pass
                 last_err = e
-                continue
             except sqlite3.OperationalError as e:
                 # Database is locked / busy. Retry.
                 try:
@@ -147,7 +147,9 @@ def append(session_id: str, event: str, data: dict) -> dict:
                 except sqlite3.OperationalError:
                     pass
                 last_err = e
-                continue
+        # Jittered backoff (10-50 ms × 2**attempt) prevents thundering-herd
+        # when multiple writers race the same session_id.
+        time.sleep(random.uniform(0.01, 0.05) * (2 ** attempt))
     raise RuntimeError(f"audit_chain.append exhausted retries: {last_err}")
 
 
