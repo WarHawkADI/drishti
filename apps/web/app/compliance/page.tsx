@@ -14,7 +14,7 @@ import TopNav from "@/components/nav/TopNav";
 const RBI_DLG = [
   {
     req: "Transparency in loan terms",
-    impl: "Offer card shows amount, rate, tenure, processing fee, total cost of credit. Verbally narrated by Drishti and persisted as a PDF in the audit bundle.",
+    impl: "Offer card shows amount, rate, tenure, processing fee, total cost of credit. Accepted terms are stored as an immutable audit snapshot.",
   },
   {
     req: "Cooling-off / look-up period",
@@ -34,7 +34,7 @@ const RBI_DLG = [
   },
   {
     req: "Grievance redressal",
-    impl: "Audit PDF includes the grievance officer contact + session id for lookup.",
+    impl: "Audit lookup includes the session id, hash-chain verification, and decision history for review.",
   },
   {
     req: "Fair-practices code",
@@ -42,7 +42,7 @@ const RBI_DLG = [
   },
   {
     req: "Audit trail",
-    impl: "Append-only SHA-256 chain (PostgreSQL). Video, transcript, decision tree retained 7 years.",
+    impl: "Append-only SHA-256 chain in SQLite for the prototype. Consent, document, fraud, decision, and selected-offer events are verifiable.",
   },
   {
     req: "Explainability of decisions",
@@ -153,7 +153,7 @@ export default function CompliancePage() {
               an append-only row. Each carries the SHA-256 hash of the previous
               row plus its own payload. The final row&apos;s hash is the{" "}
               <strong className="text-gold">session root hash</strong> —
-              printed on the offer PDF and shown to the customer at end-of-call.
+              shown to the customer at end-of-call and retained in the audit log.
             </p>
             <pre className="mt-4 overflow-x-auto rounded-lg bg-black/40 p-4 font-mono text-[11px] leading-relaxed text-emerald-300">
 {`entry_n = {
@@ -181,9 +181,9 @@ export default function CompliancePage() {
           </h2>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {[
-              { name: "Session video", sub: "H.265 480p · S3 ap-south-1" },
+              { name: "Session events", sub: "Consent · PAN · fraud · decision" },
               { name: "Diarized transcript", sub: "JSON · timestamped" },
-              { name: "Decision tree PDF", sub: "Rules fired · scores" },
+              { name: "Decision payload", sub: "Rules · risk · selected offer" },
               { name: "Consent ledger × 6", sub: "JSON in chain" },
               { name: "Fraud signal report", sub: "Evidence frames" },
               { name: "Hash chain root", sub: "SHA-256 hex" },

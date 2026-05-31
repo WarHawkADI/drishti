@@ -3,7 +3,7 @@ Drishti policy engine.
 
 Loads YAML rule + offer-grid files, evaluates a (profile, risk) tuple,
 and returns one of:
-    decision = "offer" | "soft_decline" | "hard_decline" | "route_to_human"
+    decision = "offer" | "soft_decline" | "hard_decline" | "human_review"
 
 The LLM does NOT decide. The LLM only narrates what this engine returned.
 """
@@ -88,6 +88,10 @@ def _in_range(value: float, lo, hi) -> bool:
     if hi is not None and value >= hi:
         return False
     return True
+
+
+def _canonical_decision(value: str) -> str:
+    return "human_review" if value == "route_to_human" else value
 
 
 # ----------------------------------------------------------------------
@@ -225,11 +229,18 @@ class PolicyEngine:
                     }
                 )
 
-        # 2. Decide based on first failure (priority: hard > human > soft)
+        # 2. Decide based on first failure (priority: hard > human > soft).
+        # Normalize legacy rule labels so backend, agent, audit, and UI share
+        # one contract.
         if rules_failed:
-            for severity in ("hard_decline", "route_to_human", "soft_decline"):
+            for severity in ("hard_decline", "human_review", "soft_decline"):
                 first = next(
-                    (r for r in rules_failed if r["on_fail"] == severity), None
+                    (
+                        r
+                        for r in rules_failed
+                        if _canonical_decision(r["on_fail"]) == severity
+                    ),
+                    None,
                 )
                 if first:
                     return Decision(
@@ -252,6 +263,15 @@ class PolicyEngine:
 
         # 4. Build 3 tiers from the matched cell
         offers = self._build_offers(cell, profile, risk)
+        if not offers:
+            return Decision(
+                decision="soft_decline",
+                rules_fired=rules_fired,
+                rules_failed=rules_failed,
+                reason="No affordable offer is available for the requested amount.",
+                next_best_action="Reduce the loan amount or tenure request and reapply.",
+                matched_cell=cell["id"],
+            )
 
         return Decision(
             decision="offer",
@@ -315,8 +335,9 @@ class PolicyEngine:
             n = tenure_map[tier]
             r = rate_map[tier]
             emi = _emi(amt, r, n)
-            # If EMI exceeds affordable, skip this tier for safety
-            if emi > affordable_emi and tier != "conservative":
+            # If EMI exceeds affordable, skip this tier for safety. This
+            # applies to every tier; "conservative" cannot bypass policy.
+            if emi > affordable_emi:
                 continue
             pf = int(amt * 0.01)
             cost = emi * n - amt

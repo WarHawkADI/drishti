@@ -10,6 +10,14 @@ from .. import audit_client
 from ..state import SessionState
 
 API_BASE = os.getenv("API_BASE_URL", "http://localhost:8421")
+ALLOWED_LLM_SIGNALS = {
+    "coaching": (3, 3),
+    "answer_inconsistency": (1, 2),
+    "liveness_refused": (3, 3),
+    "age_mismatch": (2, 4),
+    "geo_mismatch": (2, 2),
+    "profile_confirmation_timeout": (1, 1),
+}
 
 
 async def flag_fraud(
@@ -20,6 +28,15 @@ async def flag_fraud(
     evidence: dict | None = None,
 ) -> dict:
     """LLM-callable: register a fraud signal it has detected via answer cross-check."""
+    if signal not in ALLOWED_LLM_SIGNALS:
+        await audit_client.append(
+            state.session_id,
+            "tool.failed",
+            {"tool": "flag_fraud", "reason": "unsupported_signal", "signal": signal},
+        )
+        return {"ok": False, "reason": "unsupported_signal"}
+    lo, hi = ALLOWED_LLM_SIGNALS[signal]
+    severity = max(lo, min(hi, int(severity)))
     state.fraud_signals.append(
         {
             "signal": signal,

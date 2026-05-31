@@ -14,6 +14,7 @@ import LiveCaptions from "./LiveCaptions";
 import SignalsPanel from "./SignalsPanel";
 import OfferCard from "./OfferCard";
 import PanCapture from "./PanCapture";
+import ProfileConfirmCard from "./ProfileConfirmCard";
 import EndScreen from "./EndScreen";
 import ConsentDialog from "./ConsentDialog";
 import ProgressSteps from "./ProgressSteps";
@@ -38,19 +39,24 @@ const AGENT_EVENT_TYPES = new Set([
   "step.change",
   "consent.request",
   "pan.request",
+  "profile.confirm.request",
   "signals.update",
   "caption",
   "offer.show",
   "fraud.flag",
   "session.ended",
+  "ui.ack",
+  "state.snapshot",
 ]);
 
 export default function CallRoom({
   sessionId,
   customerName,
+  demoScenario,
 }: {
   sessionId: string;
   customerName: string;
+  demoScenario?: "happy" | "fraud" | "decline" | null;
 }) {
   const room = useRoomContext();
   const { localParticipant } = useLocalParticipant();
@@ -58,14 +64,19 @@ export default function CallRoom({
   const apply = useCallStore((s) => s.apply);
   const reset = useCallStore((s) => s.reset);
   const selectTier = useCallStore((s) => s.selectTier);
+  const trackAck = useCallStore((s) => s.trackAck);
+  const failAck = useCallStore((s) => s.failAck);
   const step = useCallStore((s) => s.step);
   const ended = useCallStore((s) => s.ended);
   const offer = useCallStore((s) => s.offer);
   const selectedTier = useCallStore((s) => s.selectedTier);
+  const selectedOffer = useCallStore((s) => s.selectedOffer);
   const captions = useCallStore((s) => s.captions);
   const signals = useCallStore((s) => s.signals);
   const panRequested = useCallStore((s) => s.panRequested);
   const consentRequested = useCallStore((s) => s.consentRequested);
+  const profileConfirm = useCallStore((s) => s.profileConfirm);
+  const failedAcks = useCallStore((s) => s.failedAcks);
 
   const [agentSpeaking, setAgentSpeaking] = useState(false);
   const [thinking, setThinking] = useState(false);
@@ -87,6 +98,13 @@ export default function CallRoom({
   useEffect(() => {
     reset();
   }, [reset]);
+
+  useEffect(() => {
+    if (!localParticipant) return;
+    localParticipant
+      .publishData(encodeEvent({ type: "state.request" }), { reliable: true })
+      .catch(() => {});
+  }, [localParticipant]);
 
   /* ---------- inbound data-channel events ---------- */
   useDataChannel((msg) => {
@@ -170,6 +188,11 @@ export default function CallRoom({
 
   function publishUi(evt: UiEvent) {
     if (!localParticipant) return;
+    const eventId =
+      evt.type === "geo.report" || evt.type === "state.request"
+        ? undefined
+        : crypto.randomUUID();
+    const payload = eventId ? { ...evt, event_id: eventId } : evt;
     // Critical events (consent.given, pan.uploaded, offer.selected) must not
     // fail silently — the agent is waiting on them. We retry once and log to
     // the console in dev. For "info-only" events (geo.report) a single
@@ -177,11 +200,14 @@ export default function CallRoom({
     const isCritical =
       evt.type === "consent.given" ||
       evt.type === "pan.uploaded" ||
-      evt.type === "offer.selected";
+      evt.type === "offer.selected" ||
+      evt.type === "profile.confirmed";
+
+    if (eventId && isCritical) trackAck(eventId, evt.type);
 
     const send = (attempt: number): void => {
       localParticipant
-        .publishData(encodeEvent(evt), { reliable: true })
+        .publishData(encodeEvent(payload), { reliable: true })
         .catch((err) => {
           if (process.env.NODE_ENV === "development") {
             console.warn(
@@ -192,10 +218,17 @@ export default function CallRoom({
           if (isCritical && attempt === 1) {
             // single retry after 400ms
             setTimeout(() => send(2), 400);
+          } else if (eventId && isCritical) {
+            failAck(eventId);
           }
         });
     };
     send(1);
+    if (eventId && isCritical) {
+      setTimeout(() => {
+        failAck(eventId);
+      }, 5000);
+    }
   }
 
   function toggleMic() {
@@ -226,6 +259,7 @@ export default function CallRoom({
           ended={ended}
           offer={offer}
           selectedTier={selectedTier}
+          selectedOffer={selectedOffer}
           onLeave={leave}
         />
       </>
@@ -235,7 +269,8 @@ export default function CallRoom({
   // Hide the orb when an interactive overlay is active, so the user focuses on the form.
   const overlayActive =
     (panRequested && step === "pan") ||
-    (!!consentRequested && step === "consent");
+    (!!consentRequested && step === "consent") ||
+    (!!profileConfirm && step === "confirm");
 
   return (
     <div className="relative flex min-h-screen flex-col">
@@ -287,6 +322,7 @@ export default function CallRoom({
           {/* Overlays */}
           {panRequested && step === "pan" && (
             <PanCapture
+              demoScenario={demoScenario}
               onUpload={(payload) => {
                 publishUi({
                   type: "pan.uploaded",
@@ -294,6 +330,20 @@ export default function CallRoom({
                   name: payload.name,
                   dob: payload.dob,
                   photo_data_url: payload.photoDataUrl,
+                  live_photo_data_url: payload.livePhotoDataUrl,
+                });
+              }}
+            />
+          )}
+
+          {profileConfirm && step === "confirm" && (
+            <ProfileConfirmCard
+              profile={profileConfirm.profile}
+              onConfirm={() => {
+                publishUi({
+                  type: "profile.confirmed",
+                  profile_version: profileConfirm.profileVersion,
+                  accepted: true,
                 });
               }}
             />
@@ -329,11 +379,21 @@ export default function CallRoom({
               offer={offer}
               onSelect={(tier) => {
                 selectTier(tier);
-                publishUi({ type: "offer.selected", tier });
+                publishUi({
+                  type: "offer.selected",
+                  tier,
+                  offer_version: offer.offerVersion,
+                });
               }}
             />
           )}
           {offer.decision === "soft_decline" && (
+            <DeclineCard
+              reason={offer.reason}
+              nba={offer.nextBestAction}
+            />
+          )}
+          {offer.decision === "hard_decline" && (
             <DeclineCard
               reason={offer.reason}
               nba={offer.nextBestAction}
@@ -350,6 +410,12 @@ export default function CallRoom({
               <FraudSignalBoard />
               <TechStackBar />
             </>
+          )}
+          {Object.keys(failedAcks).length > 0 && (
+            <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-sm text-rose-100">
+              We could not confirm the last action reached Drishti. Please try
+              again if the call does not move forward.
+            </div>
           )}
         </aside>
       </div>

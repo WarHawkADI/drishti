@@ -21,7 +21,8 @@ log = logging.getLogger("drishti.tool.face")
 
 async def verify_face(state: SessionState) -> dict:
     pan = state.profile.pan_number
-    pan_photo = state.live_face_data_url or ""  # backend handles empty string
+    pan_photo = state.pan_photo_data_url or ""
+    live_photo = state.live_face_data_url or ""
 
     if not pan:
         await audit_client.append(
@@ -31,12 +32,21 @@ async def verify_face(state: SessionState) -> dict:
         return {"ok": False, "reason": "pan_missing",
                 "passed": False, "severity": 0}
 
-    # PAN photo is optional in v1: when empty the /fraud/face-match service
-    # falls back to a deterministic by-PAN-prefix score (PRIYA -> 0.82 pass,
-    # FRAUD -> 0.28 fail, RAMES -> 0.82 pass). Don't block on missing photo.
+    if not pan_photo or not live_photo:
+        await audit_client.append(
+            state.session_id, "tool.failed",
+            {"tool": "verify_face", "reason": "face_images_missing"},
+        )
+        return {
+            "ok": False,
+            "reason": "face_images_missing",
+            "passed": False,
+            "severity": 0,
+        }
+
     payload = {
         "pan_photo_data_url": pan_photo,
-        "live_photo_data_url": pan_photo,  # placeholder until we wire frame extraction
+        "live_photo_data_url": live_photo,
         "pan_number": pan,
         "threshold": 0.4,
     }
@@ -81,6 +91,7 @@ async def verify_face(state: SessionState) -> dict:
     )
 
     # Bound memory: drop the PAN photo data URL once it has been used.
+    state.pan_photo_data_url = None
     state.live_face_data_url = None
 
     return {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Upload, FileImage, AlertCircle } from "lucide-react";
 
 type PanPayload = {
@@ -8,10 +8,12 @@ type PanPayload = {
   name: string;
   dob: string;
   photoDataUrl: string;
+  livePhotoDataUrl: string;
 };
 
 type Props = {
   onUpload: (p: PanPayload) => void;
+  demoScenario?: "happy" | "fraud" | "decline" | null;
 };
 
 const PAN_REGEX = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
@@ -19,6 +21,8 @@ const MAX_FILE_BYTES = 5 * 1024 * 1024; // 5 MB hard cap on PAN photo
 const MIN_DOB = "1925-01-01";
 const MIN_AGE_YEARS = 18;
 const MAX_AGE_YEARS = 80;
+const DEMO_PAN_IMAGE =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
 
 function ageFromDob(dob: string): number {
   const d = new Date(dob);
@@ -30,6 +34,30 @@ function ageFromDob(dob: string): number {
   return age;
 }
 
+async function captureLiveFrame(): Promise<string> {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: "user" },
+    audio: false,
+  });
+  try {
+    const video = document.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+    video.srcObject = stream;
+    await video.play();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Camera capture failed.");
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.82);
+  } finally {
+    stream.getTracks().forEach((t) => t.stop());
+  }
+}
+
 /**
  * PAN capture step.
  *
@@ -37,13 +65,46 @@ function ageFromDob(dob: string): number {
  * customer to type the PAN number for verification. In v2 we'd run
  * Tesseract.js or call Google Vision for OCR.
  */
-export default function PanCapture({ onUpload }: Props) {
+const DEMOS = {
+  happy: {
+    pan: "PRIYA1234A",
+    label: "Happy",
+    color: "text-emerald-300",
+    name: "Priya Sharma",
+    dob: "1996-03-15",
+  },
+  fraud: {
+    pan: "FRAUD1234A",
+    label: "Fraud",
+    color: "text-rose-300",
+    name: "Fraud Test",
+    dob: "1990-01-01",
+  },
+  decline: {
+    pan: "RAMES1234A",
+    label: "Decline",
+    color: "text-amber-300",
+    name: "Ramesh Kumar",
+    dob: "1979-08-20",
+  },
+} as const;
+
+export default function PanCapture({ onUpload, demoScenario }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null);
   const [panNumber, setPanNumber] = useState("");
   const [name, setName] = useState("");
   const [dob, setDob] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!demoScenario) return;
+    const d = DEMOS[demoScenario];
+    setPanNumber(d.pan);
+    setName(d.name);
+    setDob(d.dob);
+    setPhotoDataUrl(DEMO_PAN_IMAGE);
+  }, [demoScenario]);
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -70,7 +131,7 @@ export default function PanCapture({ onUpload }: Props) {
     reader.readAsDataURL(f);
   }
 
-  function submit() {
+  async function submit() {
     setError(null);
     const pan = panNumber.toUpperCase().trim();
     if (!PAN_REGEX.test(pan)) {
@@ -81,18 +142,25 @@ export default function PanCapture({ onUpload }: Props) {
     if (!trimmedName) return setError("Name as on PAN is required.");
     if (trimmedName.length > 60) return setError("Name is too long.");
     if (!dob) return setError("Date of birth is required.");
+    if (!photoDataUrl) return setError("PAN photo is required for face verification.");
 
     const age = ageFromDob(dob);
     if (age < 0) return setError("Date of birth is invalid.");
     if (age < MIN_AGE_YEARS) return setError("You must be at least 18 to apply.");
     if (age > MAX_AGE_YEARS) return setError("Date of birth looks incorrect.");
 
-    onUpload({
-      panNumber: pan,
-      name: trimmedName,
-      dob,
-      photoDataUrl: photoDataUrl || "",
-    });
+    try {
+      const livePhotoDataUrl = await captureLiveFrame();
+      onUpload({
+        panNumber: pan,
+        name: trimmedName,
+        dob,
+        photoDataUrl,
+        livePhotoDataUrl,
+      });
+    } catch {
+      setError("Camera capture failed. Please allow camera access and try again.");
+    }
   }
 
   return (
@@ -109,8 +177,8 @@ export default function PanCapture({ onUpload }: Props) {
         </span>
       </div>
       <p className="mb-3 text-sm text-indigo-100">
-        Upload a photo of your PAN card. Our computer-vision will match it to
-        your face on camera.
+        Upload a photo of your PAN card. We will capture a live camera frame
+        on submit for face verification.
       </p>
 
       {/* Demo PAN quick-fills */}
@@ -118,29 +186,7 @@ export default function PanCapture({ onUpload }: Props) {
         <span className="font-bold uppercase tracking-widest text-indigo-300">
           Demo:
         </span>
-        {[
-          {
-            pan: "PRIYA1234A",
-            label: "Happy",
-            color: "text-emerald-300",
-            name: "Priya Sharma",
-            dob: "1996-03-15",
-          },
-          {
-            pan: "FRAUD1234A",
-            label: "Fraud",
-            color: "text-rose-300",
-            name: "Fraud Test",
-            dob: "1990-01-01",
-          },
-          {
-            pan: "RAMES1234A",
-            label: "Decline",
-            color: "text-amber-300",
-            name: "Ramesh Kumar",
-            dob: "1979-08-20",
-          },
-        ].map((d) => (
+        {Object.values(DEMOS).map((d) => (
           <button
             type="button"
             key={d.pan}
@@ -148,6 +194,7 @@ export default function PanCapture({ onUpload }: Props) {
               setPanNumber(d.pan);
               setName(d.name);
               setDob(d.dob);
+              setPhotoDataUrl(DEMO_PAN_IMAGE);
               setError(null);
             }}
             className={`group min-h-[36px] rounded-md bg-white/5 px-2.5 py-1.5 font-mono transition hover:bg-white/10 ${d.color}`}

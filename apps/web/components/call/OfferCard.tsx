@@ -2,12 +2,12 @@
 
 import { CheckCircle2, Sparkles, TrendingUp, TrendingDown } from "lucide-react";
 import { cn, formatINR } from "@/lib/utils";
-import type { OfferTier } from "@/lib/events";
+import type { DecisionType, OfferTier } from "@/lib/events";
 import { useCallStore } from "@/lib/store";
 
 type Props = {
   offer: {
-    decision: "offer" | "soft_decline" | "human_review" | null;
+    decision: DecisionType | null;
     offers: OfferTier[];
     shapTop3?: { feature: string; impact: number }[];
   };

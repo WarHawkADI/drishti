@@ -7,6 +7,15 @@ import asyncio
 from .. import audit_client
 from ..state import SessionState
 
+AFFIRMATIVE_TOKENS = ("agree", "consent", "yes", "yeah", "yep", "ok", "okay")
+
+
+def _is_explicit_affirmative(text: str) -> bool:
+    lowered = f" {text.lower().strip()} "
+    if any(neg in lowered for neg in (" no ", " not ", " don't ", "do not", "refuse")):
+        return False
+    return any(tok in lowered for tok in AFFIRMATIVE_TOKENS)
+
 
 async def capture_consent(
     state: SessionState,
@@ -26,6 +35,9 @@ async def capture_consent(
         loop = asyncio.get_event_loop()
         fut = loop.create_future()
         state.consent_futures[consent_type] = fut
+        pending = state.pending_consent_payloads.pop(consent_type, None)
+        if pending is not None:
+            fut.set_result(pending)
         try:
             ui_payload = await asyncio.wait_for(fut, timeout=timeout)
             spoken_text = ui_payload.get("spoken_text", "I agree")
@@ -33,6 +45,17 @@ async def capture_consent(
             return {"ok": False, "reason": "consent_timeout"}
         finally:
             state.consent_futures.pop(consent_type, None)
+    if not _is_explicit_affirmative(spoken_text):
+        await audit_client.append(
+            state.session_id,
+            "tool.failed",
+            {
+                "tool": "capture_consent",
+                "reason": "explicit_affirmative_missing",
+                "consent_type": consent_type,
+            },
+        )
+        return {"ok": False, "reason": "explicit_affirmative_missing"}
 
     entry = await audit_client.append(
         state.session_id,

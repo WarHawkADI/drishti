@@ -72,6 +72,17 @@ export type AuditSessionSummary = {
   cibil: number | null;
   fraud_severity_max: number;
   latency_ms: number | null;
+  approved_amount?: number | null;
+  selected_offer?: {
+    tier: string;
+    amount: number;
+    rate_pct: number;
+    tenure_months: number;
+    emi: number;
+    processing_fee?: number;
+    total_cost_of_credit?: number;
+    offer_version?: number;
+  } | null;
 };
 
 export type SessionsResponse = {

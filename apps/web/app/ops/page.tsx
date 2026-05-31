@@ -621,7 +621,7 @@ function ProvidersCard() {
     { name: "Deepgram STT", status: "ok", latency: "287 ms", icon: Mic2 },
     { name: "Cartesia TTS", status: "ok", latency: "248 ms", icon: Mic2 },
     { name: "FastAPI BE", status: "ok", latency: "31 ms", icon: Server },
-    { name: "Postgres / S3 Mum", status: "ok", latency: "18 ms", icon: Server },
+    { name: "SQLite audit store", status: "ok", latency: "18 ms", icon: Server },
   ];
   return (
     <Card title="Provider health" hint="All systems operational">

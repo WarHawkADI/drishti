@@ -159,7 +159,7 @@ export default function LandingPage() {
               </span>
               <span className="flex items-center gap-1.5">
                 <Mic2 className="h-3.5 w-3.5 text-sky-400" />
-                Voice AI · Sarvam-ready
+                Voice AI · Live now
               </span>
               <span className="flex items-center gap-1.5">
                 <Zap className="h-3.5 w-3.5 text-gold" />
@@ -217,7 +217,7 @@ export default function LandingPage() {
             One-click demos · all 3 scripted paths
           </p>
           <h2 className="mt-2 text-2xl font-bold text-white">
-            Try a scenario without typing anything.
+              Try a scenario with the PAN details pre-filled.
           </h2>
           <div className="mt-6 grid gap-4 md:grid-cols-3">
             <DemoCard
@@ -315,7 +315,7 @@ export default function LandingPage() {
               { n: 2, t: "PAN + face match", b: "OCR + ArcFace cosine in <1s." },
               { n: 3, t: "Adaptive Q&A", b: "Claude probes for missing context." },
               { n: 4, t: "CIBIL + risk", b: "LightGBM + SHAP top-3 drivers." },
-              { n: 5, t: "Offer + e-sign", b: "3-tier offer · audit emitted." },
+              { n: 5, t: "Offer + audit", b: "3-tier offer · immutable snapshot." },
             ].map((s) => (
               <li
                 key={s.n}

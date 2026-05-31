@@ -34,7 +34,7 @@ class RiskIn(BaseModel):
     risk_score: float = Field(0.0, ge=0.0, le=1.0)
     propensity: float = Field(0.5, ge=0.0, le=1.0)
     fraud_severity_max: int = Field(0, ge=0, le=5)
-    shap_top3: list[dict] = []
+    shap_top3: list[dict] = Field(default_factory=list)
 
 
 class EvaluateRequest(BaseModel):

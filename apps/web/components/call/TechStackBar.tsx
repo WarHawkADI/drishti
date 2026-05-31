@@ -2,11 +2,11 @@
 
 /**
  * Slim badge strip showing the AI providers powering the current call.
- * Drives home the "Indian-first" message via Sarvam.
+ * Shows the actual providers wired in the current demo.
  */
 export default function TechStackBar() {
   const items = [
-    { name: "Sarvam AI",       sub: "Voice · India",    color: "border-saffron text-saffron" },
+    { name: "Deepgram + Cartesia", sub: "Voice loop",   color: "border-saffron text-saffron" },
     { name: "Claude Sonnet 4.6", sub: "Orchestrator",   color: "border-violet-400 text-violet-300" },
     { name: "LiveKit",         sub: "WebRTC",           color: "border-sky-400 text-sky-300" },
     { name: "LightGBM + SHAP", sub: "Risk + Explain",   color: "border-emerald-400 text-emerald-300" },

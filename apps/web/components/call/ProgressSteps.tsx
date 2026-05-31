@@ -8,6 +8,7 @@ const STEPS = [
   { id: "consent", label: "Consent" },
   { id: "pan",     label: "Verify" },
   { id: "qa",      label: "Q&A" },
+  { id: "confirm", label: "Confirm" },
   { id: "verify",  label: "Score" },
   { id: "offer",   label: "Offer" },
   { id: "ended",   label: "Done" },

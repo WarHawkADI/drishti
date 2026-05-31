@@ -11,18 +11,19 @@ import {
   Sparkles,
 } from "lucide-react";
 import { formatINR, cn } from "@/lib/utils";
-import type { OfferTier } from "@/lib/events";
+import type { DecisionType, OfferTier } from "@/lib/events";
 import EyeMark from "@/components/brand/EyeMark";
 
 type Props = {
   ended: { outcome: string; auditHash?: string };
   offer: {
-    decision: "offer" | "soft_decline" | "human_review" | null;
+    decision: DecisionType | null;
     offers: OfferTier[];
     reason?: string;
     nextBestAction?: string;
   };
   selectedTier?: "conservative" | "standard" | "stretch" | null;
+  selectedOffer?: (OfferTier & { offer_version?: number }) | null;
   onLeave: () => void;
 };
 
@@ -39,7 +40,7 @@ const OUTCOMES: Record<
   approved: {
     icon: <CheckCircle2 className="h-12 w-12 text-emerald-400" />,
     title: "Approved",
-    sub: "Your audit bundle has been emitted to Poonawalla Fincorp.",
+    sub: "Your selected offer has been stored in the audit chain.",
     color: "border-emerald-400/40 bg-emerald-500/10",
     badge: "bg-emerald-500/20 text-emerald-200",
   },
@@ -70,17 +71,13 @@ export default function EndScreen({
   ended,
   offer,
   selectedTier,
+  selectedOffer,
   onLeave,
 }: Props) {
   const meta = OUTCOMES[ended.outcome] || OUTCOMES.declined;
-  // `chosen` is only meaningful when outcome === "approved". For declined /
-  // human_review / fraud_block paths, `offer.offers` may legitimately be empty;
-  // guard against `chosen.amount` access on undefined later in the JSX.
   const chosen: OfferTier | undefined =
-    (selectedTier && offer.offers.find((o) => o.tier === selectedTier)) ||
-    offer.offers[1] ||
-    offer.offers[0] ||
-    undefined;
+    selectedOffer ??
+    (selectedTier ? offer.offers.find((o) => o.tier === selectedTier) : undefined);
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-ink px-4 py-8 sm:py-12">
@@ -137,6 +134,14 @@ export default function EndScreen({
                   ₹ {formatINR(chosen.total_cost_of_credit)}
                 </span>
               </div>
+            </div>
+          )}
+          {ended.outcome === "approved" && !chosen && (
+            <div className="mx-auto mt-6 max-w-md rounded-xl border border-rose-500/30 bg-rose-500/10 p-5 text-left">
+              <p className="text-sm font-semibold text-rose-100">
+                Approved status is missing the selected offer snapshot. A human
+                review is required before any loan terms are final.
+              </p>
             </div>
           )}
 

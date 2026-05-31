@@ -49,6 +49,6 @@ rules:
 
   - id: fraud_severity
     check: "risk.fraud_severity_max < 4"
-    on_fail: route_to_human
+    on_fail: human_review
     reason: "High-severity fraud signal detected during the call."
     next_best_action: ""

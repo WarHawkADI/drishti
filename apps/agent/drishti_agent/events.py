@@ -49,9 +49,17 @@ class ConsentRequest:
 
 
 @dataclass
+class ProfileConfirmRequest:
+    profile: dict[str, Any] = field(default_factory=dict)
+    profile_version: int = 0
+    type: Literal["profile.confirm.request"] = "profile.confirm.request"
+
+
+@dataclass
 class OfferShow:
     decision: str = "offer"
     offers: list[dict] = field(default_factory=list)
+    offer_version: int = 0
     reason: str | None = None
     next_best_action: str | None = None
     shap_top3: list[dict] = field(default_factory=list)
@@ -70,7 +78,24 @@ class FraudFlag:
 class SessionEnded:
     outcome: str = "approved"
     audit_hash: str | None = None
+    selected_offer: dict[str, Any] | None = None
     type: Literal["session.ended"] = "session.ended"
+
+
+@dataclass
+class UiAck:
+    event_id: str = ""
+    ok: bool = True
+    type: Literal["ui.ack"] = "ui.ack"
+
+
+@dataclass
+class StateSnapshot:
+    step: str = "greet"
+    offer: dict[str, Any] = field(default_factory=dict)
+    selected_offer: dict[str, Any] | None = None
+    ended: dict[str, Any] | None = None
+    type: Literal["state.snapshot"] = "state.snapshot"
 
 
 # ---------------- helpers ----------------

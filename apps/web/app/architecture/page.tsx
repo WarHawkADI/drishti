@@ -49,9 +49,9 @@ const LAYERS: Layer[] = [
     border: "border-indigo-400/40",
     desc: "Python LiveKit Agents worker. The only stateful component. 8 typed tools.",
     components: [
-      { name: "Sarvam Saaras STT", sub: "Streaming · Hindi/English", icon: Mic2 },
+      { name: "Deepgram STT", sub: "Streaming · en-IN", icon: Mic2 },
       { name: "Claude Sonnet 4.6", sub: "Orchestrator · 8 tools · 1M ctx", icon: Cpu },
-      { name: "Sarvam Bulbul TTS", sub: "Voice · Meera persona", icon: Volume2 },
+      { name: "Cartesia TTS", sub: "Voice · Meera persona", icon: Volume2 },
       { name: "Silero VAD", sub: "Turn detection · barge-in", icon: Mic2 },
     ],
   },
@@ -73,8 +73,8 @@ const LAYERS: Layer[] = [
     border: "border-emerald-400/30",
     desc: "Append-only. SHA-256 hash chain. India residency.",
     components: [
-      { name: "SHA-256 Hash Chain", sub: "PostgreSQL · 7-yr retention", icon: Shield },
-      { name: "Audit Bundle", sub: "Video · transcript · PDF", icon: Database },
+      { name: "SHA-256 Hash Chain", sub: "SQLite prototype · verifiable", icon: Shield },
+      { name: "Audit Trail", sub: "Events · decisions · selected offer", icon: Database },
       { name: "PF LOS Webhook", sub: "Drop-in REST integration", icon: Zap },
       { name: "Langfuse + OTel", sub: "LLM + infra traces", icon: Eye },
     ],
@@ -117,10 +117,10 @@ export default function ArchitecturePage() {
             Target end-to-end &lt; 1.5 s. Measured P50: 1.21 s.
           </p>
           <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-5">
-            <Budget label="Sarvam STT" ms={300} of={1500} color="bg-sky-400" />
+            <Budget label="Deepgram STT" ms={300} of={1500} color="bg-sky-400" />
             <Budget label="Claude tool call" ms={600} of={1500} color="bg-indigo-400" />
             <Budget label="API service" ms={50} of={1500} color="bg-violet-400" />
-            <Budget label="Sarvam TTS" ms={250} of={1500} color="bg-pink-400" />
+            <Budget label="Cartesia TTS" ms={250} of={1500} color="bg-pink-400" />
             <Budget label="Network + WebRTC" ms={300} of={1500} color="bg-emerald-400" />
           </div>
         </div>
@@ -152,8 +152,8 @@ export default function ArchitecturePage() {
               status="designed"
               items={[
                 "5 remaining fraud detectors (liveness, ELA, voice-age, coaching, answer-cross-check)",
-                "Sarvam Saaras + Bulbul integration (replace Deepgram + Cartesia)",
-                "Full audit-bundle PDF generator",
+                "Regional-language STT/TTS integration",
+                "Full audit-bundle export generator",
                 "Real CIBIL connector + PF LOS webhook",
                 "Hindi + Marathi support",
               ]}
@@ -177,7 +177,7 @@ export default function ArchitecturePage() {
         <div className="mt-6 grid gap-4 sm:grid-cols-2">
           <Pillar title="Stateless + horizontal scale">
             Agent workers are stateless beyond Redis session snapshots
-            (every 5s). API instances share Postgres. Add capacity by
+            (every 5s). The prototype uses a single SQLite audit store. Add capacity by
             spawning more workers.
           </Pillar>
           <Pillar title="Deterministic credit guardrails">
@@ -188,7 +188,7 @@ export default function ArchitecturePage() {
             invent a number.
           </Pillar>
           <Pillar title="Graceful degradation">
-            Sarvam down → Deepgram. Cartesia down → ElevenLabs. Mic fails →
+            STT down → human review. TTS down → human review. Mic fails →
             text channel. Policy engine fails → default soft-decline.
           </Pillar>
           <Pillar title="India data residency">

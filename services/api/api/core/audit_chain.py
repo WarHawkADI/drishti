@@ -32,7 +32,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-DB_PATH = Path(os.getenv("AUDIT_DB_PATH", "audit.db")).resolve()
+DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / "audit.db"
+DB_PATH = Path(os.getenv("AUDIT_DB_PATH", str(DEFAULT_DB_PATH))).resolve()
 _lock = threading.Lock()
 
 _SCHEMA = """

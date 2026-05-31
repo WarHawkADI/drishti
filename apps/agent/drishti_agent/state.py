@@ -16,6 +16,7 @@ from typing import Any
 class CustomerProfile:
     name: str = ""
     pan_number: str = ""
+    pan_age: int = 0
     declared_age: int = 0
     monthly_income: int = 0
     employment_type: str = ""
@@ -24,6 +25,16 @@ class CustomerProfile:
     declared_city: str = ""
     declared_lat: float | None = None
     declared_lng: float | None = None
+
+    def decision_fields(self) -> dict[str, Any]:
+        return {
+            "age": self.declared_age,
+            "monthly_income": self.monthly_income,
+            "employment_type": self.employment_type,
+            "loan_purpose": self.loan_purpose,
+            "requested_amount": self.requested_amount,
+            "declared_city": self.declared_city,
+        }
 
     def is_complete(self) -> bool:
         return all(
@@ -61,8 +72,13 @@ class SessionState:
 
     # Outcome
     decision: str | None = None
+    current_offers: list[dict] = field(default_factory=list)
+    offer_version: int = 0
     selected_tier: str | None = None
+    selected_offer_snapshot: dict[str, Any] | None = None
+    outcome: str | None = None
     audit_hash: str | None = None
+    confirmed_profile_snapshot: dict[str, Any] | None = None
 
     # Async coordination ----------------------------------------------------
     # Tools use these futures to wait for UI-driven events such as PAN upload,
@@ -70,7 +86,13 @@ class SessionState:
     pan_future: asyncio.Future | None = None
     consent_futures: dict[str, asyncio.Future] = field(default_factory=dict)
     offer_future: asyncio.Future | None = None
+    profile_confirm_future: asyncio.Future | None = None
+    pending_pan_payload: dict[str, Any] | None = None
+    pending_offer_payload: dict[str, Any] | None = None
+    pending_profile_confirm_payload: dict[str, Any] | None = None
+    pending_consent_payloads: dict[str, dict[str, Any]] = field(default_factory=dict)
     geo_actual: dict[str, float] | None = None  # {lat, lng}
+    pan_photo_data_url: str | None = None
     live_face_data_url: str | None = None
 
     # Step tracker. Mutations are guarded by step_lock so concurrent tool
@@ -92,4 +114,6 @@ class SessionState:
             "fraud_severity_max": self.fraud_severity_max,
             "decision": self.decision,
             "selected_tier": self.selected_tier,
+            "selected_offer": self.selected_offer_snapshot,
+            "outcome": self.outcome,
         }

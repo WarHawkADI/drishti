@@ -3,6 +3,8 @@
 import { create } from "zustand";
 import type {
   AgentEvent,
+  ConfirmedProfile,
+  DecisionType,
   OfferTier,
   StepChangeEvent,
 } from "./events";
@@ -28,31 +30,42 @@ type State = {
   captions: Caption[];
   panRequested: boolean;
   consentRequested: { consent_type: string; prompt: string } | null;
+  profileConfirm: { profile: ConfirmedProfile; profileVersion: number } | null;
   offer: {
-    decision: "offer" | "soft_decline" | "human_review" | null;
+    decision: DecisionType | null;
     offers: OfferTier[];
+    offerVersion?: number;
     reason?: string;
     nextBestAction?: string;
     shapTop3?: { feature: string; impact: number }[];
   };
   selectedTier: "conservative" | "standard" | "stretch" | null;
+  selectedOffer: (OfferTier & { offer_version?: number }) | null;
   fraudFlags: FraudFlag[];
+  pendingAcks: Record<string, { type: string; ts: number }>;
+  failedAcks: Record<string, { type: string; ts: number }>;
   ended: { outcome: string; auditHash?: string } | null;
 
   apply: (e: AgentEvent) => void;
   selectTier: (tier: "conservative" | "standard" | "stretch") => void;
+  trackAck: (eventId: string, type: string) => void;
+  failAck: (eventId: string) => void;
   reset: () => void;
 };
 
-const initial: Omit<State, "apply" | "reset" | "selectTier"> = {
+const initial: Omit<State, "apply" | "reset" | "selectTier" | "trackAck" | "failAck"> = {
   step: "greet",
   signals: {},
   captions: [],
   panRequested: false,
   consentRequested: null,
+  profileConfirm: null,
   offer: { decision: null, offers: [] },
   selectedTier: null,
+  selectedOffer: null,
   fraudFlags: [],
+  pendingAcks: {},
+  failedAcks: {},
   ended: null,
 };
 
@@ -60,6 +73,26 @@ export const useCallStore = create<State>((set) => ({
   ...initial,
   reset: () => set({ ...initial }),
   selectTier: (tier) => set({ selectedTier: tier }),
+  trackAck: (eventId, type) =>
+    set((state) => ({
+      pendingAcks: { ...state.pendingAcks, [eventId]: { type, ts: Date.now() } },
+      failedAcks: Object.fromEntries(
+        Object.entries(state.failedAcks).filter(([k]) => k !== eventId),
+      ),
+    })),
+  failAck: (eventId) =>
+    set((state) => {
+      const pending = state.pendingAcks[eventId];
+      if (!pending) return {};
+      const { [eventId]: _removed, ...rest } = state.pendingAcks;
+      return {
+        pendingAcks: rest,
+        failedAcks: {
+          ...state.failedAcks,
+          [eventId]: { type: pending.type, ts: Date.now() },
+        },
+      };
+    }),
   apply: (e) =>
     set((state) => {
       switch (e.type) {
@@ -101,15 +134,27 @@ export const useCallStore = create<State>((set) => ({
               prompt: e.prompt,
             },
           };
+        case "profile.confirm.request":
+          return {
+            step: "confirm",
+            profileConfirm: {
+              profile: e.profile,
+              profileVersion: e.profile_version,
+            },
+          };
         case "offer.show":
           return {
             offer: {
               decision: e.decision,
               offers: e.offers ?? [],
+              offerVersion: e.offer_version,
               reason: e.reason,
               nextBestAction: e.next_best_action,
               shapTop3: e.shap_top3,
             },
+            selectedTier: null,
+            selectedOffer: null,
+            profileConfirm: null,
           };
         case "fraud.flag":
           return {
@@ -126,6 +171,31 @@ export const useCallStore = create<State>((set) => ({
         case "session.ended":
           return {
             ended: { outcome: e.outcome, auditHash: e.audit_hash },
+            selectedOffer: e.selected_offer ?? state.selectedOffer,
+          };
+        case "ui.ack": {
+          const { [e.event_id]: _removed, ...rest } = state.pendingAcks;
+          const { [e.event_id]: _failed, ...failedRest } = state.failedAcks;
+          return { pendingAcks: rest, failedAcks: failedRest };
+        }
+        case "state.snapshot":
+          return {
+            step: e.step ?? state.step,
+            offer: e.offer
+              ? {
+                  decision: e.offer.decision ?? null,
+                  offers: e.offer.offers ?? [],
+                  offerVersion: e.offer.offer_version,
+                  reason: e.offer.reason,
+                  nextBestAction: e.offer.next_best_action,
+                  shapTop3: e.offer.shap_top3,
+                }
+              : state.offer,
+            selectedOffer: e.selected_offer ?? state.selectedOffer,
+            selectedTier: e.selected_offer?.tier ?? state.selectedTier,
+            ended: e.ended?.outcome
+              ? { outcome: e.ended.outcome, auditHash: e.ended.audit_hash }
+              : state.ended,
           };
         default:
           return {};

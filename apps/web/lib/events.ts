@@ -8,7 +8,7 @@
 // ---------- agent -> ui ----------
 export type StepChangeEvent = {
   type: "step.change";
-  step: "greet" | "consent" | "pan" | "qa" | "verify" | "offer" | "ended";
+  step: "greet" | "consent" | "pan" | "qa" | "confirm" | "verify" | "offer" | "ended";
 };
 
 export type ConsentRequestEvent = {
@@ -54,10 +54,28 @@ export type OfferTier = {
   total_cost_of_credit: number;
 };
 
+export type DecisionType = "offer" | "soft_decline" | "hard_decline" | "human_review";
+
+export type ConfirmedProfile = {
+  age: number;
+  monthly_income: number;
+  employment_type: string;
+  loan_purpose: string;
+  requested_amount: number;
+  declared_city: string;
+};
+
+export type ProfileConfirmRequestEvent = {
+  type: "profile.confirm.request";
+  profile: ConfirmedProfile;
+  profile_version: number;
+};
+
 export type OfferShowEvent = {
   type: "offer.show";
-  decision: "offer" | "soft_decline" | "human_review";
+  decision: DecisionType;
   offers?: OfferTier[];
+  offer_version?: number;
   reason?: string;
   next_best_action?: string;
   shap_top3?: { feature: string; impact: number }[];
@@ -74,26 +92,60 @@ export type SessionEndedEvent = {
   type: "session.ended";
   outcome: "approved" | "declined" | "fraud_block" | "human_review";
   audit_hash?: string;
+  selected_offer?: (OfferTier & { offer_version?: number }) | null;
+};
+
+export type UiAckEvent = {
+  type: "ui.ack";
+  event_id: string;
+  ok: boolean;
+};
+
+export type StateSnapshotEvent = {
+  type: "state.snapshot";
+  step: StepChangeEvent["step"];
+  offer?: {
+    decision?: DecisionType | null;
+    offers?: OfferTier[];
+    offer_version?: number;
+    reason?: string;
+    next_best_action?: string;
+    shap_top3?: { feature: string; impact: number }[];
+  };
+  selected_offer?: (OfferTier & { offer_version?: number }) | null;
+  ended?: { outcome?: SessionEndedEvent["outcome"]; audit_hash?: string } | null;
 };
 
 // ---------- ui -> agent ----------
 export type ConsentGivenEvent = {
   type: "consent.given";
+  event_id?: string;
   consent_type: string;
   spoken_text: string;
 };
 
 export type PanUploadedEvent = {
   type: "pan.uploaded";
+  event_id?: string;
   pan_number: string;
   name: string;
   dob: string;
   photo_data_url: string;
+  live_photo_data_url: string;
 };
 
 export type OfferSelectedEvent = {
   type: "offer.selected";
+  event_id?: string;
   tier: "conservative" | "standard" | "stretch";
+  offer_version?: number;
+};
+
+export type ProfileConfirmedEvent = {
+  type: "profile.confirmed";
+  event_id?: string;
+  profile_version: number;
+  accepted: boolean;
 };
 
 export type GeoReportEvent = {
@@ -103,22 +155,32 @@ export type GeoReportEvent = {
   city?: string;
 };
 
+export type StateRequestEvent = {
+  type: "state.request";
+  event_id?: string;
+};
+
 // ---------- union ----------
 export type AgentEvent =
   | StepChangeEvent
   | ConsentRequestEvent
   | PanRequestEvent
+  | ProfileConfirmRequestEvent
   | SignalsUpdateEvent
   | CaptionEvent
   | OfferShowEvent
   | FraudFlagEvent
-  | SessionEndedEvent;
+  | SessionEndedEvent
+  | UiAckEvent
+  | StateSnapshotEvent;
 
 export type UiEvent =
   | ConsentGivenEvent
   | PanUploadedEvent
   | OfferSelectedEvent
-  | GeoReportEvent;
+  | ProfileConfirmedEvent
+  | GeoReportEvent
+  | StateRequestEvent;
 
 // ---------- helpers ----------
 export function encodeEvent(e: AgentEvent | UiEvent): Uint8Array {

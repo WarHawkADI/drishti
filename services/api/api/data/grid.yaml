@@ -8,7 +8,7 @@ cells:
   # ---- Tier A: Premium salaried ----
   - id: A1
     match:
-      cibil: [780, 900]
+      cibil: [780, 901]
       monthly_income: [100000, null]
       employment_type: ["salaried", "salaried_pvt", "salaried_govt"]
     offer:
@@ -51,7 +51,7 @@ cells:
   # ---- Tier D: Self-employed strong ----
   - id: D1
     match:
-      cibil: [720, 900]
+      cibil: [720, 901]
       monthly_income: [80000, null]
       employment_type: ["self_employed"]
     offer:

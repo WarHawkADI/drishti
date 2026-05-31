@@ -5,12 +5,12 @@ Wraps a LiveKit VoicePipelineAgent with:
   - Sarvam-replaceable Deepgram STT
   - Cartesia TTS (voice persona "Meera")
   - Silero VAD
-  - Claude Sonnet 4.6 LLM with 8 typed tools
+  - Claude Sonnet 4.6 LLM with typed tools
   - Per-session state shared with every tool
 
 Tool flow:
   capture_consent -> request_pan_upload -> verify_face -> check_bureau ->
-  evaluate_offer -> wait_for_offer_selection -> end_session
+  confirm_profile -> evaluate_offer -> wait_for_offer_selection -> end_session
 
 Runtime data path between agent and UI: LiveKit data channel events
 (see drishti_agent.events for shapes; mirrors apps/web/lib/events.ts).
@@ -86,21 +86,17 @@ async def _safe_publish(state: SessionState, payload: bytes) -> None:
         log.warning("publish_data failed: %s", e)
 
 
-def _clamp(value: int, lo: int, hi: int, default: int, *, name: str = "arg") -> int:
-    """Sanitize integer args coming back from the LLM. Out-of-range -> default.
-
-    Logs a warning whenever a clamp actually happens so the audit trail isn't
-    silent about LLM-supplied OOB values.
-    """
+def _strict_int(value: int, lo: int, hi: int, *, name: str = "arg") -> int:
+    """Validate integer args coming back from the LLM without inventing values."""
     try:
         v = int(value)
     except (TypeError, ValueError):
-        log.warning("clamp.bad_type name=%s value=%r -> %s", name, value, default)
-        return default
+        log.warning("strict_int.bad_type name=%s value=%r", name, value)
+        raise ValueError(f"{name}_invalid") from None
     if v < lo or v > hi:
-        log.warning("clamp.out_of_range name=%s value=%s range=[%s,%s] -> %s",
-                    name, v, lo, hi, default)
-        return default
+        log.warning("strict_int.out_of_range name=%s value=%s range=[%s,%s]",
+                    name, v, lo, hi)
+        raise ValueError(f"{name}_out_of_range")
     return v
 
 
@@ -121,23 +117,100 @@ def _sanitize_name(raw: str | None) -> str:
     return (cleaned or "there")[:40]
 
 
+def _canonical_decision(value: str | None) -> str:
+    return "human_review" if value == "route_to_human" else (value or "human_review")
+
+
+def _apply_profile_args(
+    state: SessionState,
+    age: int,
+    monthly_income: int,
+    employment_type: str,
+    loan_purpose: str,
+    requested_amount: int,
+    declared_city: str,
+) -> dict:
+    age = _strict_int(age, 18, 80, name="age")
+    monthly_income = _strict_int(
+        monthly_income, 1, 10_000_000, name="monthly_income"
+    )
+    requested_amount = _strict_int(
+        requested_amount, 1, 20_000_000, name="requested_amount"
+    )
+    employment_type = (employment_type or "").lower().strip()
+    if employment_type not in {"salaried", "salaried_pvt", "salaried_govt", "self_employed", "other"}:
+        employment_type = "other"
+    declared_city = (declared_city or "").strip()[:50]
+    loan_purpose = (loan_purpose or "").strip()[:50]
+    if not declared_city:
+        raise ValueError("declared_city_required")
+    if not loan_purpose:
+        raise ValueError("loan_purpose_required")
+
+    next_profile = {
+        "age": age,
+        "monthly_income": monthly_income,
+        "employment_type": employment_type,
+        "loan_purpose": loan_purpose,
+        "requested_amount": requested_amount,
+        "declared_city": declared_city,
+    }
+    if state.profile.decision_fields() != next_profile:
+        state.confirmed_profile_snapshot = None
+
+    state.profile.declared_age = age
+    state.profile.monthly_income = monthly_income
+    state.profile.employment_type = employment_type
+    state.profile.loan_purpose = loan_purpose
+    state.profile.requested_amount = requested_amount
+    state.profile.declared_city = declared_city
+    return next_profile
+
+
+async def _publish_state_snapshot(state: SessionState) -> None:
+    if not state.room:
+        return
+    await _safe_publish(
+        state,
+        evt.encode(
+            evt.StateSnapshot(
+                step=state.step,
+                offer={
+                    "decision": state.decision,
+                    "offers": state.current_offers,
+                    "offer_version": state.offer_version,
+                },
+                selected_offer=state.selected_offer_snapshot,
+                ended=(
+                    {
+                        "outcome": state.outcome,
+                        "audit_hash": state.audit_hash,
+                    }
+                    if state.audit_hash
+                    else None
+                ),
+            )
+        ),
+    )
+
+
 # ----------------------------------------------------------------------
 # Tool wiring
 # ----------------------------------------------------------------------
 def build_function_context(state: SessionState) -> llm.FunctionContext:
-    """Bind the 8 tools to a per-session FunctionContext."""
+    """Bind the per-session FunctionContext."""
 
     fnc = llm.FunctionContext()
 
-    @fnc.ai_callable(description="Record verbal consent (consent_type like 'data_processing'). Call AFTER customer says 'yes'.")
-    async def capture_consent(consent_type: str, spoken_text: str = "I agree") -> str:
+    @fnc.ai_callable(description="Record explicit consent. Call after the customer clearly agrees, passing their exact words when available.")
+    async def capture_consent(consent_type: str, spoken_text: str = "") -> str:
         if state.room:
             await _safe_publish(state, evt.encode(evt.ConsentRequest(
                 consent_type=consent_type,
                 prompt=f"Verbal consent for: {consent_type.replace('_', ' ')}",
             )))
             await _set_step(state, "consent")
-        result = await t_consent.capture_consent(state, consent_type, spoken_text)
+        result = await t_consent.capture_consent(state, consent_type, spoken_text or None)
         return json.dumps(result)
 
     @fnc.ai_callable(description="Trigger UI to show the PAN upload form. Blocks until customer submits. Returns extracted PAN/name/dob.")
@@ -182,6 +255,79 @@ def build_function_context(state: SessionState) -> llm.FunctionContext:
         await _push_signals(state, cibil=result.get("cibil"))
         return json.dumps(result)
 
+    @fnc.ai_callable(description="Show the extracted application facts to the customer and wait for UI confirmation before scoring.")
+    async def confirm_profile(
+        age: int,
+        monthly_income: int,
+        employment_type: str,
+        loan_purpose: str,
+        requested_amount: int,
+        declared_city: str,
+    ) -> str:
+        try:
+            profile = _apply_profile_args(
+                state,
+                age,
+                monthly_income,
+                employment_type,
+                loan_purpose,
+                requested_amount,
+                declared_city,
+            )
+        except ValueError as e:
+            return json.dumps({"ok": False, "reason": str(e)})
+        if state.profile.pan_age and abs(state.profile.pan_age - profile["age"]) > 5:
+            result = await t_fraud.flag_fraud(
+                state,
+                "age_mismatch",
+                3,
+                "Spoken age differs from PAN date of birth by more than 5 years.",
+            )
+            if state.room:
+                await _safe_publish(state, evt.encode(evt.FraudFlag(
+                    signal="age_mismatch",
+                    severity=3,
+                    reason="Spoken age differs from PAN date of birth by more than 5 years.",
+                )))
+            return json.dumps({
+                "ok": False,
+                "reason": "pan_age_mismatch",
+                "fraud": result,
+            })
+
+        state.offer_version += 1
+        version = state.offer_version
+        loop = asyncio.get_event_loop()
+        state.profile_confirm_future = loop.create_future()
+        if state.pending_profile_confirm_payload is not None:
+            if state.pending_profile_confirm_payload.get("profile_version") == version:
+                state.profile_confirm_future.set_result(state.pending_profile_confirm_payload)
+            state.pending_profile_confirm_payload = None
+        if state.room:
+            await _safe_publish(state, evt.encode(evt.ProfileConfirmRequest(
+                profile=profile,
+                profile_version=version,
+            )))
+            await _set_step(state, "confirm")
+
+        try:
+            payload = await asyncio.wait_for(state.profile_confirm_future, timeout=90.0)
+        except asyncio.TimeoutError:
+            await t_fraud.flag_fraud(
+                state,
+                "profile_confirmation_timeout",
+                1,
+                "Customer did not confirm extracted profile details.",
+            )
+            return json.dumps({"ok": False, "reason": "profile_confirmation_timeout"})
+        finally:
+            state.profile_confirm_future = None
+
+        if payload.get("profile_version") != version or not payload.get("accepted"):
+            return json.dumps({"ok": False, "reason": "profile_not_accepted"})
+        state.confirmed_profile_snapshot = profile
+        return json.dumps({"ok": True, "profile": profile, "profile_version": version})
+
     @fnc.ai_callable(description="Submit profile to risk model + policy engine. Returns decision (offer/soft_decline/hard_decline/human_review) and offers.")
     async def evaluate_offer(
         age: int,
@@ -191,30 +337,47 @@ def build_function_context(state: SessionState) -> llm.FunctionContext:
         requested_amount: int,
         declared_city: str,
     ) -> str:
-        # ---- Sanitize args coming back from the LLM ----
-        age = _clamp(age, 18, 80, default=30, name="age")
-        monthly_income = _clamp(monthly_income, 0, 10_000_000, default=50_000, name="monthly_income")
-        requested_amount = _clamp(requested_amount, 0, 20_000_000, default=300_000, name="requested_amount")
-        employment_type = (employment_type or "salaried").lower().strip()
-        if employment_type not in {"salaried", "salaried_pvt", "salaried_govt", "self_employed", "other"}:
-            employment_type = "other"
-        declared_city = (declared_city or "Pune").strip()[:50]
-        loan_purpose = (loan_purpose or "other").strip()[:50]
-
-        state.profile.declared_age = age
-        state.profile.monthly_income = monthly_income
-        state.profile.employment_type = employment_type
-        state.profile.loan_purpose = loan_purpose
-        state.profile.requested_amount = requested_amount
-        state.profile.declared_city = declared_city
+        try:
+            _apply_profile_args(
+                state,
+                age,
+                monthly_income,
+                employment_type,
+                loan_purpose,
+                requested_amount,
+                declared_city,
+            )
+        except ValueError as e:
+            result = {
+                "decision": "human_review",
+                "offers": [],
+                "reason": "Application details could not be verified.",
+                "next_best_action": "A human colleague will review the application details.",
+                "risk_score": None,
+                "risk_band": None,
+                "shap_top3": [],
+                "ok": False,
+                "error": str(e),
+            }
+            if state.room:
+                await _safe_publish(state, evt.encode(evt.OfferShow(
+                    decision="human_review",
+                    offers=[],
+                    reason=result["reason"],
+                    next_best_action=result["next_best_action"],
+                    shap_top3=[],
+                )))
+                await _set_step(state, "offer")
+            return json.dumps(result)
 
         result = await t_offer.evaluate_offer(state)
         await _push_signals(state, risk=result.get("risk_band", "?"))
 
         if state.room:
             await _safe_publish(state, evt.encode(evt.OfferShow(
-                decision=result["decision"],
+                decision=_canonical_decision(result["decision"]),
                 offers=result.get("offers", []),
+                offer_version=result.get("offer_version", state.offer_version),
                 reason=result.get("reason"),
                 next_best_action=result.get("next_best_action"),
                 shap_top3=result.get("shap_top3", []),
@@ -230,13 +393,17 @@ def build_function_context(state: SessionState) -> llm.FunctionContext:
     async def flag_fraud(signal: str, severity: int, reason: str) -> str:
         # Sanitize args
         signal = (signal or "unknown").strip()[:50]
-        severity = _clamp(severity, 0, 5, default=2, name="fraud_severity")
+        try:
+            severity = _strict_int(severity, 0, 5, name="fraud_severity")
+        except ValueError:
+            severity = 2
         reason = (reason or "").strip()[:500]
-        if state.room:
+        result = await t_fraud.flag_fraud(state, signal, severity, reason)
+        if result.get("ok") and state.room:
             await _safe_publish(state, evt.encode(evt.FraudFlag(
                 signal=signal, severity=severity, reason=reason,
             )))
-        return json.dumps(await t_fraud.flag_fraud(state, signal, severity, reason))
+        return json.dumps(result)
 
     @fnc.ai_callable(description="End the session. outcome must be one of: approved, declined, fraud_block, human_review.")
     async def end_session(outcome: str) -> str:
@@ -244,7 +411,9 @@ def build_function_context(state: SessionState) -> llm.FunctionContext:
         if state.room:
             await _set_step(state, "ended")
             await _safe_publish(state, evt.encode(evt.SessionEnded(
-                outcome=outcome, audit_hash=result["audit_hash"],
+                outcome=result["outcome"],
+                audit_hash=result["audit_hash"],
+                selected_offer=result.get("selected_offer"),
             )))
         return json.dumps(result)
 
@@ -285,19 +454,41 @@ def install_data_handler(room: rtc.Room, state: SessionState):
         if not isinstance(kind, str):
             return
 
+        event_id = payload.get("event_id")
+        if isinstance(event_id, str) and event_id:
+            asyncio.create_task(_safe_publish(
+                state,
+                evt.encode(evt.UiAck(event_id=event_id, ok=True)),
+            ))
+
         if kind == "consent.given":
             ctype = payload.get("consent_type", "data_processing")
             fut = state.consent_futures.get(ctype)
             if fut and not fut.done():
                 fut.set_result(payload)
+            else:
+                state.pending_consent_payloads[ctype] = payload
 
         elif kind == "pan.uploaded":
             if state.pan_future and not state.pan_future.done():
                 state.pan_future.set_result(payload)
+            else:
+                state.pending_pan_payload = payload
 
         elif kind == "offer.selected":
             if state.offer_future and not state.offer_future.done():
                 state.offer_future.set_result(payload)
+            else:
+                state.pending_offer_payload = payload
+
+        elif kind == "profile.confirmed":
+            if state.profile_confirm_future and not state.profile_confirm_future.done():
+                state.profile_confirm_future.set_result(payload)
+            else:
+                state.pending_profile_confirm_payload = payload
+
+        elif kind == "state.request":
+            asyncio.create_task(_publish_state_snapshot(state))
 
         elif kind == "geo.report":
             try:
@@ -328,13 +519,21 @@ async def entrypoint(ctx: JobContext):
     @ctx.room.on("participant_disconnected")
     def _on_participant_left(_p):  # noqa: ARG001
         state.live_face_data_url = None
+        state.pan_photo_data_url = None
         state.consent_futures.clear()
+        state.pending_consent_payloads.clear()
+        state.pending_pan_payload = None
+        state.pending_offer_payload = None
+        state.pending_profile_confirm_payload = None
         if state.pan_future and not state.pan_future.done():
             state.pan_future.cancel()
             state.pan_future = None
         if state.offer_future and not state.offer_future.done():
             state.offer_future.cancel()
             state.offer_future = None
+        if state.profile_confirm_future and not state.profile_confirm_future.done():
+            state.profile_confirm_future.cancel()
+            state.profile_confirm_future = None
         log.info("session.cleanup pii_wiped sid=%s", state.session_id)
 
     participant = await ctx.wait_for_participant()
@@ -406,7 +605,7 @@ async def entrypoint(ctx: JobContext):
         # chains tool calls (capture_consent -> request_pan_upload, then
         # request_pan_upload -> verify_face). With depth=1 the second tool
         # is dropped/delayed, which causes the "form doesn't appear" lag.
-        max_nested_fnc_calls=5,
+        max_nested_fnc_calls=6,
     )
 
     # ---- User caption chronology ----

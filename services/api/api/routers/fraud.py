@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from api.core import face_match, fraud_aggregator
@@ -22,6 +22,11 @@ class FaceMatchRequest(BaseModel):
 
 @router.post("/face-match")
 def face_match_endpoint(req: FaceMatchRequest):
+    if not req.pan_photo_data_url or not req.live_photo_data_url:
+        raise HTTPException(
+            status_code=422,
+            detail="pan_photo_data_url and live_photo_data_url are required",
+        )
     r = face_match.match(
         pan_photo=req.pan_photo_data_url,
         live_photo=req.live_photo_data_url,

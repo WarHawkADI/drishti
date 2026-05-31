@@ -30,9 +30,10 @@ def append(req: AppendRequest):
 def list_sessions(limit: int = Query(50, ge=1, le=500)):
     """Aggregate every audited session into a list — drives the Operations
     Console KPIs (real numbers, not synthetic). Each entry derives:
-        decision   (offer / soft_decline / human_review)
+        decision   (offer / soft_decline / hard_decline / human_review)
         outcome    (approved / declined / fraud_block / human_review)
         cibil      (from bureau.pulled event)
+        selected_offer (immutable accepted terms, when approved)
         fraud_max  (max severity across fraud.flagged events)
         latency_ms (delta from first event to session.ended, when present)
     """
@@ -65,16 +66,20 @@ def list_sessions(limit: int = Query(50, ge=1, le=500)):
             outcome = None
             cibil = None
             fraud_max = 0
+            selected_offer = None
             for row in chain:
                 ev = row["event"]
                 try:
                     data = json.loads(row["data_json"])
                 except Exception:
                     data = {}
-                if ev == "decision.computed" and decision is None:
+                if ev == "decision.computed":
                     decision = data.get("decision")
                 if ev == "session.ended":
                     outcome = data.get("outcome")
+                    selected_offer = data.get("selected_offer") or selected_offer
+                if ev == "offer.selected":
+                    selected_offer = data.get("offer") or selected_offer
                 if ev == "bureau.pulled" and cibil is None:
                     cibil = data.get("cibil")
                 if ev == "fraud.flagged":
@@ -101,6 +106,12 @@ def list_sessions(limit: int = Query(50, ge=1, le=500)):
                 "cibil": cibil,
                 "fraud_severity_max": fraud_max,
                 "latency_ms": latency_ms,
+                "selected_offer": selected_offer,
+                "approved_amount": (
+                    selected_offer.get("amount")
+                    if isinstance(selected_offer, dict)
+                    else None
+                ),
             })
 
     return {"count": len(sessions), "sessions": sessions}
